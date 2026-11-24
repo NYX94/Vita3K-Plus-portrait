@@ -1,0 +1,19 @@
+{
+  "packages": [
+{
+  "SPDXID" : "SPDXRef-resource-0",
+  "checksums" : 
+  [
+    {
+      "algorithm" : "SHA512",
+      "checksumValue" : "caee7e554c15db672c58c4267123a59769485810680757450491d4bf4c91ccfdf600066b78caf3ebb3707d15ed9452d1ac2d736db3a32a1f11fa912c2ed5a311"
+    }
+  ],
+  "copyrightText" : "NOASSERTION",
+  "downloadLocation" : "git+https://github.com/boostorg/tuple@boost-1.90.0",
+  "licenseConcluded" : "NOASSERTION",
+  "licenseDeclared" : "NOASSERTION",
+  "name" : "boostorg/tuple"
+}
+  ]
+}

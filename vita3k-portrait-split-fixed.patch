@@ -1,0 +1,169 @@
+diff --git a/android/app/src/main/AndroidManifest.xml b/android/app/src/main/AndroidManifest.xml
+--- a/android/app/src/main/AndroidManifest.xml
++++ b/android/app/src/main/AndroidManifest.xml
+@@ -110,6 +110,7 @@
+         <activity android:name=".Emulator"
+             android:alwaysRetainTaskState="true"
+             android:launchMode="singleTop"
++            android:screenOrientation="portrait"
+             android:configChanges="layoutDirection|locale|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
+             android:preferMinimalPostProcessing="true"
+             android:theme="@style/Theme.Design.NoActionBar"
+diff --git a/android/app/src/main/java/org/vita3k/emulator/Emulator.java b/android/app/src/main/java/org/vita3k/emulator/Emulator.java
+--- a/android/app/src/main/java/org/vita3k/emulator/Emulator.java
++++ b/android/app/src/main/java/org/vita3k/emulator/Emulator.java
+@@ -49,6 +49,8 @@ public class Emulator extends SDLActivity
+ {
+     private static final String TAG = "Vita3K";
+     private static final long IME_RESTORE_DELAY_MS = 250L;
++    private static final boolean PORTRAIT_SPLIT_LAYOUT = true;
++    private static final float VITA_DISPLAY_ASPECT_RATIO = 960f / 544f;
+     public static final String EXTRA_TITLE_ID = "title_id";
+     public static final String EXTRA_GAME_TITLE = "game_title";
+     private static final String APP_RESTART_PARAMETERS = "AppStartParameters";
+@@ -78,7 +80,11 @@ public class Emulator extends SDLActivity
+     private RelativeLayout.LayoutParams lastTextInputLayoutParams;
+     private int lastTextInputType;
+     private boolean hasLastTextInputState;
+     private ImagePathResultCallback pendingImagePathCallback;
++    private RelativeLayout portraitSplitRoot;
++    private final View.OnLayoutChangeListener portraitSplitLayoutListener =
++            (view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) ->
++                    applyPortraitSplitLayout();
+ 
+     public static Intent createLaunchIntent(Context context, String titleId, String gameTitle) {
+         Intent intent = new Intent(context, Emulator.class);
+@@ -121,11 +127,20 @@ public class Emulator extends SDLActivity
+     @Override
+     protected SDLSurface createSDLSurface(Context context) {
+         mSurface = new EmuSurface(context);
++        mSurface.setPortraitSplitMode(PORTRAIT_SPLIT_LAYOUT);
+         mSurface.post(() -> {
+             if (mSurface.getParent() instanceof ViewGroup) {
++                ViewGroup parent = (ViewGroup) mSurface.getParent();
+                 InputOverlay overlay = getmOverlay();
+                 if (overlay != null && overlay.getParent() == null) {
+-                    ((ViewGroup) mSurface.getParent()).addView(overlay);
++                    if (PORTRAIT_SPLIT_LAYOUT && parent instanceof RelativeLayout) {
++                        parent.addView(overlay, new RelativeLayout.LayoutParams(
++                                ViewGroup.LayoutParams.MATCH_PARENT,
++                                ViewGroup.LayoutParams.MATCH_PARENT));
++                        installPortraitSplitLayout(parent);
++                    } else {
++                        parent.addView(overlay);
++                    }
+                 }
+                 refreshControllerOverlayScope();
+                 refreshUiState(true);
+@@ -137,6 +152,61 @@ public class Emulator extends SDLActivity
+         return mSurface;
+     }
+ 
++    private void installPortraitSplitLayout(ViewGroup parent) {
++        if (!(parent instanceof RelativeLayout)) {
++            Log.w(TAG, "Portrait split layout requires SDL's RelativeLayout root");
++            return;
++        }
++
++        portraitSplitRoot = (RelativeLayout) parent;
++        portraitSplitRoot.addOnLayoutChangeListener(portraitSplitLayoutListener);
++        applyPortraitSplitLayout();
++    }
++
++    private void applyPortraitSplitLayout() {
++        if (!PORTRAIT_SPLIT_LAYOUT || portraitSplitRoot == null || mSurface == null) {
++            return;
++        }
++
++        InputOverlay overlay = getmOverlay();
++        if (overlay == null) {
++            return;
++        }
++
++        int rootWidth = portraitSplitRoot.getWidth();
++        int rootHeight = portraitSplitRoot.getHeight();
++        if (rootWidth <= 0 || rootHeight <= 1) {
++            return;
++        }
++
++        // Vita's native display is 960x544. Keep the game view at that aspect ratio.
++        int gameHeight = Math.round(rootWidth / VITA_DISPLAY_ASPECT_RATIO);
++        gameHeight = Math.max(1, Math.min(gameHeight, rootHeight - 1));
++        int controlsHeight = rootHeight - gameHeight;
++
++        ViewGroup.LayoutParams surfaceParams = mSurface.getLayoutParams();
++        if (!(surfaceParams instanceof RelativeLayout.LayoutParams)
++                || surfaceParams.width != ViewGroup.LayoutParams.MATCH_PARENT
++                || surfaceParams.height != gameHeight) {
++            RelativeLayout.LayoutParams params = new RelativeLayout.LayoutParams(
++                    ViewGroup.LayoutParams.MATCH_PARENT, gameHeight);
++            params.addRule(RelativeLayout.ALIGN_PARENT_TOP);
++            params.addRule(RelativeLayout.ALIGN_PARENT_LEFT);
++            mSurface.setLayoutParams(params);
++        }
++
++        ViewGroup.LayoutParams overlayParams = overlay.getLayoutParams();
++        if (!(overlayParams instanceof RelativeLayout.LayoutParams)
++                || overlayParams.width != ViewGroup.LayoutParams.MATCH_PARENT
++                || overlayParams.height != controlsHeight) {
++            RelativeLayout.LayoutParams params = new RelativeLayout.LayoutParams(
++                    ViewGroup.LayoutParams.MATCH_PARENT, controlsHeight);
++            params.addRule(RelativeLayout.ALIGN_PARENT_BOTTOM);
++            params.addRule(RelativeLayout.ALIGN_PARENT_LEFT);
++            overlay.setLayoutParams(params);
++        }
++    }
++
+     @Override
+     protected String[] getArguments() {
+         Intent intent = getIntent();
+@@ -225,6 +295,10 @@ public class Emulator extends SDLActivity
+         if (inputManager != null) {
+             inputManager.unregisterInputDeviceListener(this);
+         }
++        if (portraitSplitRoot != null) {
++            portraitSplitRoot.removeOnLayoutChangeListener(portraitSplitLayoutListener);
++            portraitSplitRoot = null;
++        }
+         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY);
+         composeViewModelStore.clear();
+         super.onDestroy();
+diff --git a/android/app/src/main/java/org/vita3k/emulator/EmuSurface.java b/android/app/src/main/java/org/vita3k/emulator/EmuSurface.java
+--- a/android/app/src/main/java/org/vita3k/emulator/EmuSurface.java
++++ b/android/app/src/main/java/org/vita3k/emulator/EmuSurface.java
+@@ -10,5 +10,6 @@ public class EmuSurface extends SDLSurface {
+ 
+     private InputOverlay mOverlay;
++    private boolean mPortraitSplitMode;
+ 
+     public InputOverlay getmOverlay() {
+         return mOverlay;
+@@ -22,6 +23,10 @@ public class EmuSurface extends SDLSurface {
+         mOverlay = new InputOverlay(context);
+     }
+ 
++    public void setPortraitSplitMode(boolean enabled) {
++        mPortraitSplitMode = enabled;
++    }
++
+     @Override
+     public void surfaceCreated(SurfaceHolder holder) {
+         setSurfaceStatus(true);
+@@ -36,12 +41,15 @@ public class EmuSurface extends SDLSurface {
+ 
+     @Override
+     public boolean onTouch(View v, MotionEvent event) {
+-        if(mOverlay.onTouch(v, event)){
++        // In split mode the overlay occupies its own view below the game surface.
++        // Let InputOverlay receive its own local-coordinate events there; only forward
++        // surface events to the overlay in the legacy full-screen-overlay layout.
++        if (!mPortraitSplitMode && mOverlay.onTouch(v, event)) {
+             // priority is given to the overlay
+             return true;
+         }
+ 
+         return super.onTouch(v, event);
+     }
+ 
+     public native void setSurfaceStatus(boolean surface_present);
+ }

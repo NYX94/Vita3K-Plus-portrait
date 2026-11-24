@@ -11,6 +11,7 @@ import org.vita3k.emulator.overlay.InputOverlay;
 public class EmuSurface extends SDLSurface {
 
     private InputOverlay mOverlay;
+    private boolean mPortraitSplitMode;
 
     public InputOverlay getmOverlay() {
         return mOverlay;
@@ -19,6 +20,10 @@ public class EmuSurface extends SDLSurface {
     public EmuSurface(Context context){
         super(context);
         mOverlay = new InputOverlay(context);
+    }
+
+    public void setPortraitSplitMode(boolean enabled) {
+        mPortraitSplitMode = enabled;
     }
 
     @Override
@@ -35,7 +40,10 @@ public class EmuSurface extends SDLSurface {
 
     @Override
     public boolean onTouch(View v, MotionEvent event) {
-        if(mOverlay.onTouch(v, event)){
+        // In split mode the overlay occupies its own view below the game surface.
+        // Let InputOverlay receive its own local-coordinate events there; only forward
+        // surface events to the overlay in the legacy full-screen-overlay layout.
+        if (!mPortraitSplitMode && mOverlay.onTouch(v, event)) {
             // priority is given to the overlay
             return true;
         }

@@ -62,6 +62,11 @@ import org.vita3k.emulator.ui.rememberConnectedGamepads
 import org.vita3k.emulator.ui.theme.ApplyDialogDim
 import org.vita3k.emulator.ui.viewmodel.SettingsViewModel
 
+private const val DISPLAY_PREFERENCES = "display_layout_preferences"
+private const val KEY_PORTRAIT_LAYOUT = "portrait_layout_enabled"
+private const val KEY_PORTRAIT_GAME_SCALE = "portrait_game_scale"
+private const val KEY_PORTRAIT_GAME_OFFSET = "portrait_game_offset"
+
 private val CUSTOM_DRIVER_MIME_TYPES = arrayOf(
     "application/zip",
     "application/x-zip-compressed",
@@ -93,12 +98,24 @@ fun SettingsRoute(
 
     val context = LocalContext.current
     val isPerApp = titleId != null
+    val displayPreferences = remember(context) {
+        context.getSharedPreferences(DISPLAY_PREFERENCES, android.content.Context.MODE_PRIVATE)
+    }
+    var portraitMode by remember(displayPreferences) {
+        mutableStateOf(displayPreferences.getBoolean(KEY_PORTRAIT_LAYOUT, true))
+    }
+    var portraitGameScale by remember(displayPreferences) {
+        mutableStateOf(displayPreferences.getInt(KEY_PORTRAIT_GAME_SCALE, 100).coerceIn(70, 100))
+    }
+    var portraitGameOffset by remember(displayPreferences) {
+        mutableStateOf(displayPreferences.getInt(KEY_PORTRAIT_GAME_OFFSET, 0).coerceIn(0, 100))
+    }
     val settingsLoaded = viewModel.isLoaded(titleId)
     val categories = remember(isPerApp) { settingsCategories(isPerApp) }
     val scrollState = rememberScrollState()
     val overlayScopeId = titleId.orEmpty()
-    var overlayState by remember(titleId) { mutableStateOf(OverlayStore.defaultState(context)) }
-    var originalOverlayState by remember(titleId) { mutableStateOf(overlayState) }
+    var overlayState by remember(titleId, portraitMode) { mutableStateOf(OverlayStore.defaultState(context, portraitMode)) }
+    var originalOverlayState by remember(titleId, portraitMode) { mutableStateOf(overlayState) }
     val connectedGamepads = rememberConnectedGamepads(context)
     val controllerConnected = connectedGamepads.isNotEmpty()
     val overlayDirty = overlayState != originalOverlayState
@@ -154,12 +171,13 @@ fun SettingsRoute(
         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
     }
 
-    LaunchedEffect(settingsLoaded, titleId, viewModel.hasCustomConfig) {
+    LaunchedEffect(settingsLoaded, titleId, viewModel.hasCustomConfig, portraitMode) {
         if (settingsLoaded) {
             val loaded = OverlayStore.resolveState(
                 context = context,
                 scopeId = overlayScopeId,
-                allowGameOverride = isPerApp && OverlayStore.hasGameOverride(context, overlayScopeId)
+                allowGameOverride = isPerApp && OverlayStore.hasGameOverride(context, overlayScopeId),
+                portrait = portraitMode
             )
             overlayState = loaded
             originalOverlayState = loaded
@@ -170,7 +188,8 @@ fun SettingsRoute(
         val loaded = OverlayStore.resolveState(
             context = context,
             scopeId = overlayScopeId,
-            allowGameOverride = isPerApp && OverlayStore.hasGameOverride(context, overlayScopeId)
+            allowGameOverride = isPerApp && OverlayStore.hasGameOverride(context, overlayScopeId),
+            portrait = portraitMode
         )
         overlayState = loaded
         originalOverlayState = loaded
@@ -183,9 +202,9 @@ fun SettingsRoute(
         )
         overlayState = normalized
         if (isPerApp) {
-            OverlayStore.saveGameOverride(context, overlayScopeId, normalized)
+            OverlayStore.saveGameOverride(context, overlayScopeId, normalized, portraitMode)
         } else {
-            OverlayStore.saveGlobalState(context, normalized)
+            OverlayStore.saveGlobalState(context, normalized, portraitMode)
         }
         originalOverlayState = normalized
     }
@@ -342,6 +361,21 @@ fun SettingsRoute(
                     controllerConnected = controllerConnected,
                     hasOverlayChanges = overlayDirty,
                     connectedGamepads = connectedGamepads,
+                    displayPortraitMode = portraitMode,
+                    onDisplayPortraitModeChange = { enabled ->
+                        portraitMode = enabled
+                        displayPreferences.edit().putBoolean(KEY_PORTRAIT_LAYOUT, enabled).apply()
+                    },
+                    portraitDisplayScale = portraitGameScale,
+                    onPortraitDisplayScaleChange = { value ->
+                        portraitGameScale = value.coerceIn(70, 100)
+                        displayPreferences.edit().putInt(KEY_PORTRAIT_GAME_SCALE, portraitGameScale).apply()
+                    },
+                    portraitDisplayOffset = portraitGameOffset,
+                    onPortraitDisplayOffsetChange = { value ->
+                        portraitGameOffset = value.coerceIn(0, 100)
+                        displayPreferences.edit().putInt(KEY_PORTRAIT_GAME_OFFSET, portraitGameOffset).apply()
+                    },
                     categories = categories,
                     onChangeStorageFolder = ::requestStorageFolderChange,
                     onResetStorageFolder = { viewModel.resetStorageFolder(onStorageChanged) },
@@ -357,7 +391,7 @@ fun SettingsRoute(
                         showOverlayEditor = true
                     },
                     onResetControlsLayout = {
-                        overlayState = overlayState.copy(layout = OverlayStore.defaultLayout(context))
+                        overlayState = overlayState.copy(layout = OverlayStore.defaultLayout(context, portraitMode))
                     },
                     onShowHelp = { activeHelp = it },
                 )
@@ -368,6 +402,7 @@ fun SettingsRoute(
             OverlayLayoutEditorDialog(
                 overlayConfig = overlayState.config,
                 overlayLayout = overlayState.layout,
+                portraitMode = portraitMode,
                 onDismiss = { updatedLayout ->
                     overlayState = overlayState.copy(layout = updatedLayout)
                     showOverlayEditor = false
@@ -412,7 +447,7 @@ fun SettingsRoute(
                 TextButton(onClick = {
                     showResetDefaultsDialog = false
                     viewModel.resetToDefaults()
-                    overlayState = OverlayStore.defaultState(context)
+                    overlayState = OverlayStore.defaultState(context, portraitMode)
                 }) {
                     Text(stringResource(R.string.settings_reset_defaults))
                 }
@@ -599,6 +634,12 @@ private fun SettingsContentPane(
     controllerConnected: Boolean,
     hasOverlayChanges: Boolean,
     connectedGamepads: List<org.vita3k.emulator.ConnectedGamepad>,
+    displayPortraitMode: Boolean,
+    onDisplayPortraitModeChange: (Boolean) -> Unit,
+    portraitDisplayScale: Int,
+    onPortraitDisplayScaleChange: (Int) -> Unit,
+    portraitDisplayOffset: Int,
+    onPortraitDisplayOffsetChange: (Int) -> Unit,
     categories: List<SettingsCategory>,
     onChangeStorageFolder: () -> Unit,
     onResetStorageFolder: () -> Unit,
@@ -673,6 +714,12 @@ private fun SettingsContentPane(
                 onResetControlsLayout = onResetControlsLayout,
                 controllerConnected = controllerConnected,
                 connectedGamepads = connectedGamepads,
+                displayPortraitMode = displayPortraitMode,
+                onDisplayPortraitModeChange = onDisplayPortraitModeChange,
+                portraitDisplayScale = portraitDisplayScale,
+                onPortraitDisplayScaleChange = onPortraitDisplayScaleChange,
+                portraitDisplayOffset = portraitDisplayOffset,
+                onPortraitDisplayOffsetChange = onPortraitDisplayOffsetChange,
                 onShowHelp = onShowHelp
             )
         } else {

@@ -7,12 +7,14 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
@@ -27,6 +29,7 @@ import org.vita3k.emulator.ui.components.OverlayEditorPalette
 internal fun OverlayLayoutEditorDialog(
     overlayConfig: OverlayConfig,
     overlayLayout: OverlayLayout,
+    portraitMode: Boolean = false,
     onDismiss: (OverlayLayout) -> Unit
 ) {
     val context = LocalContext.current
@@ -37,7 +40,7 @@ internal fun OverlayLayoutEditorDialog(
         onDismiss(overlayView?.captureLayout() ?: overlayLayout)
     }
 
-    ImmersiveLandscapeEffect(activity = activity)
+    ImmersiveLandscapeEffect(activity = activity, enabled = !portraitMode)
     BackHandler(onBack = ::finishEditor)
 
     Box(
@@ -45,36 +48,88 @@ internal fun OverlayLayoutEditorDialog(
             .fillMaxSize()
             .background(Color.Black)
     ) {
-        AndroidView(
-            factory = { viewContext ->
-                InputOverlay(viewContext).apply {
-                    overlayView = this
-                    setLayout(overlayLayout)
-                    setAllowVirtualController(false)
-                    setAutoHideEnabled(false)
-                    setIsInEditMode(true)
-                    setScale(overlayConfig.overlayScale / 100f)
-                    setOpacity(overlayConfig.overlayOpacity)
-                    setState(overlayConfig.activeMask())
+        if (portraitMode) {
+            androidx.compose.foundation.layout.Column(Modifier.fillMaxSize()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(0.26f)
+                        .background(Color(0xFF171C26)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    androidx.compose.material3.Text(
+                        text = "GAME DISPLAY PREVIEW",
+                        color = Color.White.copy(alpha = 0.72f)
+                    )
                 }
-            },
-            update = { view ->
-                overlayView = view
-                view.setLayout(overlayLayout)
-                view.setAllowVirtualController(false)
-                view.setAutoHideEnabled(false)
-                view.setIsInEditMode(true)
-                view.setScale(overlayConfig.overlayScale / 100f)
-                view.setOpacity(overlayConfig.overlayOpacity)
-                view.setState(overlayConfig.activeMask())
-            },
-            modifier = Modifier.fillMaxSize()
-        )
+                AndroidView(
+                    factory = { viewContext ->
+                        InputOverlay(viewContext).apply {
+                            setZOrderMediaOverlay(false)
+                            overlayView = this
+                            setLayoutOrientation(true)
+                            setLayout(overlayLayout)
+                            setAllowVirtualController(false)
+                            setAutoHideEnabled(false)
+                            setIsInEditMode(true)
+                            setScale(overlayConfig.overlayScale / 100f)
+                            setOpacity(overlayConfig.overlayOpacity)
+                            setState(overlayConfig.activeMask())
+                        }
+                    },
+                    update = { view ->
+                        overlayView = view
+                        view.setZOrderMediaOverlay(false)
+                        view.setLayoutOrientation(true)
+                        view.setLayout(overlayLayout)
+                        view.setAllowVirtualController(false)
+                        view.setAutoHideEnabled(false)
+                        view.setIsInEditMode(true)
+                        view.setScale(overlayConfig.overlayScale / 100f)
+                        view.setOpacity(overlayConfig.overlayOpacity)
+                        view.setState(overlayConfig.activeMask())
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(0.74f)
+                )
+            }
+        } else {
+            AndroidView(
+                factory = { viewContext ->
+                    InputOverlay(viewContext).apply {
+                        setZOrderMediaOverlay(false)
+                        overlayView = this
+                        setLayoutOrientation(false)
+                        setLayout(overlayLayout)
+                        setAllowVirtualController(false)
+                        setAutoHideEnabled(false)
+                        setIsInEditMode(true)
+                        setScale(overlayConfig.overlayScale / 100f)
+                        setOpacity(overlayConfig.overlayOpacity)
+                        setState(overlayConfig.activeMask())
+                    }
+                },
+                update = { view ->
+                    overlayView = view
+                    view.setZOrderMediaOverlay(false)
+                    view.setLayoutOrientation(false)
+                    view.setLayout(overlayLayout)
+                    view.setAllowVirtualController(false)
+                    view.setAutoHideEnabled(false)
+                    view.setIsInEditMode(true)
+                    view.setScale(overlayConfig.overlayScale / 100f)
+                    view.setOpacity(overlayConfig.overlayOpacity)
+                    view.setState(overlayConfig.activeMask())
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+        }
 
         OverlayEditorPalette(
             onDone = ::finishEditor,
             onReset = {
-                overlayView?.setLayout(OverlayStore.defaultLayout(context))
+                overlayView?.setLayout(OverlayStore.defaultLayout(context, portraitMode))
             }
         )
     }

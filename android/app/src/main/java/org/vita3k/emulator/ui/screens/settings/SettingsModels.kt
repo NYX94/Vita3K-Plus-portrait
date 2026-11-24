@@ -35,6 +35,7 @@ internal enum class SettingsCategory(
     Audio(R.string.settings_tab_audio, Icons.AutoMirrored.Filled.VolumeUp),
     Camera(R.string.settings_tab_camera, Icons.Default.PhotoCamera),
     System(R.string.settings_tab_system, Icons.Default.Language),
+    Display(R.string.settings_tab_display, Icons.Default.Tune),
     Controls(R.string.settings_tab_controls, Icons.Default.TouchApp),
     Interface(R.string.settings_tab_interface, Icons.Default.Settings),
     Emulator(R.string.settings_tab_emulator, Icons.Default.SettingsSuggest),
@@ -44,7 +45,7 @@ internal enum class SettingsCategory(
 
 internal fun settingsCategories(isPerApp: Boolean): List<SettingsCategory> {
     return if (isPerApp) {
-        SettingsCategory.entries.filter { it != SettingsCategory.Camera && it != SettingsCategory.Interface }
+        SettingsCategory.entries.filter { it != SettingsCategory.Camera && it != SettingsCategory.Interface && it != SettingsCategory.Display }
     } else {
         SettingsCategory.entries.toList()
     }

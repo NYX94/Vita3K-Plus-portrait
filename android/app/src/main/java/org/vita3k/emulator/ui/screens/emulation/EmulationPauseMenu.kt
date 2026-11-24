@@ -51,6 +51,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -567,6 +568,7 @@ private fun SessionTab(
     onNeedsRestart: (List<RestartRequiredSetting>) -> Unit
 ) {
     val uiState = sessionViewModel.uiState
+    var portraitLayout by remember(activity) { mutableStateOf(activity.isPortraitLayoutEnabled()) }
     val settingsLoaded = uiState.titleId.isNotBlank() && settingsViewModel.isLoaded(uiState.titleId)
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -598,6 +600,15 @@ private fun SessionTab(
             }
         }
 
+        DisplayOrientationSection(
+            activity = activity,
+            portraitMode = portraitLayout,
+            onSelect = { enabled ->
+                portraitLayout = enabled
+                activity.setPortraitLayoutEnabled(enabled)
+            }
+        )
+
         CustomConfigSection(
             settingsLoaded = settingsLoaded,
             hasCustomConfig = settingsViewModel.hasCustomConfig,
@@ -627,6 +638,83 @@ private fun SessionTab(
 
         if (!settingsLoaded) {
             SettingsLoadingState(modifier = Modifier.fillMaxWidth())
+        }
+    }
+}
+
+@Composable
+private fun DisplayOrientationSection(
+    activity: Emulator,
+    portraitMode: Boolean,
+    onSelect: (Boolean) -> Unit
+) {
+    var gameScale by remember(activity) { mutableStateOf(activity.portraitGameScale.toFloat()) }
+    var gameOffset by remember(activity) { mutableStateOf(activity.portraitGameOffset.toFloat()) }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.36f),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = RoundedCornerShape(20.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(
+                text = "Screen orientation",
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold)
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                FilterChip(
+                    selected = portraitMode,
+                    onClick = { onSelect(true) },
+                    modifier = Modifier.weight(1f),
+                    colors = settingsFilterChipColors(),
+                    label = { Text("Portrait") }
+                )
+                FilterChip(
+                    selected = !portraitMode,
+                    onClick = { onSelect(false) },
+                    modifier = Modifier.weight(1f),
+                    colors = settingsFilterChipColors(),
+                    label = { Text("Landscape") }
+                )
+            }
+            Text(
+                text = if (portraitMode) {
+                    "Game display at the top, virtual controls below."
+                } else {
+                    "Landscape game display with virtual controls overlaid."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (portraitMode) {
+                Text("Game image size: ${gameScale.toInt()}%", style = MaterialTheme.typography.labelLarge)
+                Slider(
+                    value = gameScale,
+                    onValueChange = {
+                        gameScale = it
+                        activity.setPortraitDisplaySettings(it.toInt(), gameOffset.toInt())
+                    },
+                    valueRange = 70f..100f,
+                    steps = 29
+                )
+                Text("Vertical position: ${gameOffset.toInt()}%", style = MaterialTheme.typography.labelLarge)
+                Slider(
+                    value = gameOffset,
+                    onValueChange = {
+                        gameOffset = it
+                        activity.setPortraitDisplaySettings(gameScale.toInt(), it.toInt())
+                    },
+                    valueRange = 0f..100f,
+                    steps = 99
+                )
+            }
         }
     }
 }
@@ -808,10 +896,10 @@ private fun EmbeddedSettingsTab(
     val customSettingsLoaded = titleId.isNotBlank() && settingsViewModel.isLoaded(titleId)
     val globalSettingsLoaded = globalSettingsViewModel.isLoaded(titleId = null)
     val customCategories = remember {
-        settingsCategories(isPerApp = true).filter { it != SettingsCategory.Controls }
+        settingsCategories(isPerApp = true).filter { it != SettingsCategory.Controls && it != SettingsCategory.Display }
     }
     val globalCategories = remember {
-        settingsCategories(isPerApp = false).filter { it != SettingsCategory.Controls }
+        settingsCategories(isPerApp = false).filter { it != SettingsCategory.Controls && it != SettingsCategory.Display }
     }
     var activeScope by remember { mutableStateOf(PauseSettingsScope.Global) }
     var selectedCustomCategory by remember { mutableStateOf(SettingsCategory.Gpu) }

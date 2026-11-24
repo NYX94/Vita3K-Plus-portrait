@@ -1,0 +1,19 @@
+{
+  "packages": [
+{
+  "SPDXID" : "SPDXRef-resource-0",
+  "checksums" : 
+  [
+    {
+      "algorithm" : "SHA512",
+      "checksumValue" : "5af80e29a29187e73d4617d19d05aa679bd9ab7b232155830525621a0686766a8285b9d98b9f6ad92d91dcf28822b083c9c28e0d1df784cf022f0ba051e49d6a"
+    }
+  ],
+  "copyrightText" : "NOASSERTION",
+  "downloadLocation" : "git+https://github.com/boostorg/numeric_conversion@boost-1.90.0",
+  "licenseConcluded" : "NOASSERTION",
+  "licenseDeclared" : "NOASSERTION",
+  "name" : "boostorg/numeric_conversion"
+}
+  ]
+}
