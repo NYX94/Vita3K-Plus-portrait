@@ -8,10 +8,12 @@ package org.vita3k.emulator.overlay;
 import org.vita3k.emulator.R;
 
 import android.content.Context;
+import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
+import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 import android.util.DisplayMetrics;
@@ -63,6 +65,8 @@ public final class InputOverlay extends SurfaceView implements OnTouchListener
   private float mScale = 1.0f;
   private int mOpacity = 100;
   private OverlayLayout mLayout;
+  private boolean mPortraitLayout;
+  private String mOverlayScopeId = "";
 
   // last Time the screen was touched
   private long mlastTouchTime;
@@ -102,6 +106,10 @@ public final class InputOverlay extends SurfaceView implements OnTouchListener
   {
     super(context/*, attrs*/);
 
+    // Keep virtual controls visible over the SDL SurfaceView with a transparent background.
+    getHolder().setFormat(PixelFormat.TRANSLUCENT);
+    setZOrderMediaOverlay(true);
+
     // Set the on touch listener.
     // Do not register the overlay as a touch listener
     // Instead let EmuSurface forward touch events
@@ -113,7 +121,8 @@ public final class InputOverlay extends SurfaceView implements OnTouchListener
     // Request focus for the overlay so it has priority on presses.
     requestFocus();
 
-    applyResolvedState(OverlayStore.loadGlobalState(getContext()), false);
+    mPortraitLayout = getResources().getConfiguration().orientation == Configuration.ORIENTATION_PORTRAIT;
+    applyResolvedState(OverlayStore.loadGlobalState(getContext(), mPortraitLayout), false);
 
     refreshControls();
     resetHideTimer();
@@ -652,7 +661,7 @@ public final class InputOverlay extends SurfaceView implements OnTouchListener
 
   public void resetButtonPlacement()
   {
-    setLayout(OverlayStore.defaultLayout(getContext()), true);
+    setLayout(OverlayStore.defaultLayout(getContext(), mPortraitLayout), true);
   }
 
   public void setScale(float scale){
@@ -917,9 +926,23 @@ public final class InputOverlay extends SurfaceView implements OnTouchListener
 
   public void refreshOverlayScope(String scopeId)
   {
-    boolean allowGameOverride = OverlayStore.hasGameOverride(getContext(), scopeId);
-    OverlayState state = OverlayStore.resolveState(getContext(), scopeId, allowGameOverride);
+    mOverlayScopeId = scopeId != null ? scopeId : "";
+    boolean allowGameOverride = OverlayStore.hasGameOverride(getContext(), mOverlayScopeId);
+    OverlayState state = OverlayStore.resolveState(getContext(), mOverlayScopeId, allowGameOverride, mPortraitLayout);
     applyResolvedState(state, true);
+  }
+
+  public void setLayoutOrientation(boolean portrait)
+  {
+    if (mPortraitLayout == portrait)
+      return;
+    mPortraitLayout = portrait;
+    refreshOverlayScope(mOverlayScopeId);
+  }
+
+  public boolean isPortraitLayout()
+  {
+    return mPortraitLayout;
   }
 
   public void rebindController()
@@ -972,7 +995,7 @@ public final class InputOverlay extends SurfaceView implements OnTouchListener
   private void setLayout(OverlayLayout layout, boolean refresh)
   {
     OverlayLayout normalizedLayout = layout != null ? layout.normalized()
-            : OverlayStore.defaultLayout(getContext());
+            : OverlayStore.defaultLayout(getContext(), mPortraitLayout);
     if (normalizedLayout.equals(mLayout))
       return;
 
@@ -984,7 +1007,7 @@ public final class InputOverlay extends SurfaceView implements OnTouchListener
 
   private void applyResolvedState(OverlayState state, boolean refresh)
   {
-    OverlayState resolvedState = state != null ? state : OverlayStore.defaultState(getContext());
+    OverlayState resolvedState = state != null ? state : OverlayStore.defaultState(getContext(), mPortraitLayout);
     OverlayLayout normalizedLayout = resolvedState.getLayout().normalized();
     OverlayConfig normalizedConfig = resolvedState.getConfig().normalized();
     float resolvedScale = normalizedConfig.getOverlayScale() / 100f;

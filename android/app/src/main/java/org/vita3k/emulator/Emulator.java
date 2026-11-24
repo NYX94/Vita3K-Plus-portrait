@@ -2,6 +2,7 @@ package org.vita3k.emulator;
 
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
 import android.content.res.AssetFileDescriptor;
 import android.graphics.Bitmap;
@@ -68,6 +69,7 @@ public class Emulator extends SDLActivity
 {
     private static final String TAG = "Vita3K";
     private static final long IME_RESTORE_DELAY_MS = 250L;
+    private static final float VITA_DISPLAY_ASPECT_RATIO = 960f / 544f;
     public static final String EXTRA_TITLE_ID = "title_id";
     public static final String EXTRA_GAME_TITLE = "game_title";
     private static final String APP_RESTART_PARAMETERS = "AppStartParameters";
@@ -101,6 +103,10 @@ public class Emulator extends SDLActivity
     private int lastTextInputType;
     private boolean hasLastTextInputState;
     private ImagePathResultCallback pendingImagePathCallback;
+    private RelativeLayout portraitSplitRoot;
+    private final View.OnLayoutChangeListener portraitSplitLayoutListener =
+            (view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) ->
+                    applyPortraitSplitLayout();
 
     public static Intent createLaunchIntent(Context context, String titleId, String gameTitle) {
         Intent intent = new Intent(context, Emulator.class);
@@ -117,6 +123,58 @@ public class Emulator extends SDLActivity
     public InputOverlay getmOverlay() {
         return mSurface != null ? mSurface.getmOverlay() : null;
     }
+
+    private static final String DISPLAY_PREFERENCES = "display_layout_preferences";
+    private static final String KEY_PORTRAIT_LAYOUT = "portrait_layout_enabled";
+
+    public boolean isPortraitLayoutEnabled() {
+        return getSharedPreferences(DISPLAY_PREFERENCES, MODE_PRIVATE)
+                .getBoolean(KEY_PORTRAIT_LAYOUT, true);
+    }
+
+    public void setPortraitLayoutEnabled(boolean enabled) {
+        getSharedPreferences(DISPLAY_PREFERENCES, MODE_PRIVATE).edit()
+                .putBoolean(KEY_PORTRAIT_LAYOUT, enabled)
+                .apply();
+        runOnUiThread(() -> {
+            applyRequestedDisplayOrientation();
+            if (mSurface != null) {
+                mSurface.setPortraitSplitMode(enabled);
+                if (mSurface.getmOverlay() != null) {
+                    mSurface.getmOverlay().setLayoutOrientation(enabled);
+                }
+            }
+            applyPortraitSplitLayout();
+        });
+    }
+
+    private static final String KEY_PORTRAIT_GAME_SCALE = "portrait_game_scale";
+    private static final String KEY_PORTRAIT_GAME_OFFSET = "portrait_game_offset";
+
+    public int getPortraitGameScale() {
+        return getSharedPreferences(DISPLAY_PREFERENCES, MODE_PRIVATE)
+                .getInt(KEY_PORTRAIT_GAME_SCALE, 100);
+    }
+
+    public int getPortraitGameOffset() {
+        return getSharedPreferences(DISPLAY_PREFERENCES, MODE_PRIVATE)
+                .getInt(KEY_PORTRAIT_GAME_OFFSET, 0);
+    }
+
+    public void setPortraitDisplaySettings(int scalePercent, int offsetPercent) {
+        getSharedPreferences(DISPLAY_PREFERENCES, MODE_PRIVATE).edit()
+                .putInt(KEY_PORTRAIT_GAME_SCALE, Math.max(70, Math.min(100, scalePercent)))
+                .putInt(KEY_PORTRAIT_GAME_OFFSET, Math.max(0, Math.min(100, offsetPercent)))
+                .apply();
+        runOnUiThread(this::applyPortraitSplitLayout);
+    }
+
+    private void applyRequestedDisplayOrientation() {
+        setRequestedOrientation(isPortraitLayoutEnabled()
+                ? ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                : ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+    }
+
 
     @Keep
     public void setCurrentGameId(String gameId){
@@ -146,6 +204,11 @@ public class Emulator extends SDLActivity
      * @return names of shared libraries to be loaded (e.g. "SDL3", "main").
      */
     @Override
+    public void setOrientationBis(int w, int h, boolean resizable, String hint) {
+        runOnUiThread(this::applyRequestedDisplayOrientation);
+    }
+
+    @Override
     protected String[] getLibraries() {
         return new String[] { "Vita3K" };
     }
@@ -153,17 +216,119 @@ public class Emulator extends SDLActivity
     @Override
     protected SDLSurface createSDLSurface(Context context) {
         mSurface = new EmuSurface(context);
+        mSurface.setPortraitSplitMode(isPortraitLayoutEnabled());
         mSurface.post(() -> {
-            if (mSurface.getParent() instanceof ViewGroup) {
-                InputOverlay overlay = getmOverlay();
-                if (overlay != null && overlay.getParent() == null) {
-                    ((ViewGroup) mSurface.getParent()).addView(overlay);
-                }
-                refreshControllerOverlayScope();
-                refreshUiState(true);
+            if (mSurface == null || !(mSurface.getParent() instanceof ViewGroup)) {
+                return;
             }
+            ViewGroup parent = (ViewGroup) mSurface.getParent();
+            InputOverlay overlay = getmOverlay();
+            if (overlay != null && overlay.getParent() == null) {
+                if (parent instanceof RelativeLayout) {
+                    parent.addView(overlay, new RelativeLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT));
+                } else {
+                    parent.addView(overlay);
+                }
+            }
+            if (parent instanceof RelativeLayout) {
+                installPortraitSplitLayout(parent);
+            }
+            refreshControllerOverlayScope();
+            refreshUiState(true);
         });
         return mSurface;
+    }
+
+    private void installPortraitSplitLayout(ViewGroup parent) {
+        if (!(parent instanceof RelativeLayout)) {
+            Log.w(TAG, "Display layout requires SDL's RelativeLayout root");
+            return;
+        }
+        RelativeLayout root = (RelativeLayout) parent;
+        if (portraitSplitRoot != root) {
+            if (portraitSplitRoot != null) {
+                portraitSplitRoot.removeOnLayoutChangeListener(portraitSplitLayoutListener);
+            }
+            portraitSplitRoot = root;
+            portraitSplitRoot.addOnLayoutChangeListener(portraitSplitLayoutListener);
+        }
+        applyPortraitSplitLayout();
+    }
+
+    private void applyPortraitSplitLayout() {
+        if (portraitSplitRoot == null || mSurface == null) {
+            return;
+        }
+        InputOverlay overlay = getmOverlay();
+        if (overlay == null) {
+            return;
+        }
+        int rootWidth = portraitSplitRoot.getWidth();
+        int rootHeight = portraitSplitRoot.getHeight();
+        if (rootWidth <= 0 || rootHeight <= 1) {
+            return;
+        }
+
+        boolean portrait = isPortraitLayoutEnabled();
+        mSurface.setPortraitSplitMode(portrait);
+        overlay.setLayoutOrientation(portrait);
+
+        int gameWidth;
+        int gameHeight;
+        int gameTop;
+        int controlsHeight;
+        RelativeLayout.LayoutParams surfaceParams;
+        RelativeLayout.LayoutParams overlayParams;
+
+        if (portrait) {
+            int scale = getPortraitGameScale();
+            int offset = getPortraitGameOffset();
+            gameWidth = Math.max(1, Math.min(rootWidth, Math.round(rootWidth * (scale / 100f))));
+            gameHeight = Math.max(1, Math.round(gameWidth / VITA_DISPLAY_ASPECT_RATIO));
+            int minimumControlsHeight = Math.max(1, Math.round(rootWidth * 0.70f));
+            int maxTop = Math.max(0, rootHeight - gameHeight - minimumControlsHeight);
+            gameTop = Math.round(maxTop * (offset / 100f));
+            controlsHeight = Math.max(1, rootHeight - gameTop - gameHeight);
+
+            surfaceParams = new RelativeLayout.LayoutParams(gameWidth, gameHeight);
+            surfaceParams.addRule(RelativeLayout.CENTER_HORIZONTAL);
+            surfaceParams.addRule(RelativeLayout.ALIGN_PARENT_TOP);
+            surfaceParams.topMargin = gameTop;
+
+            overlayParams = new RelativeLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, controlsHeight);
+            overlayParams.addRule(RelativeLayout.ALIGN_PARENT_BOTTOM);
+        } else {
+            gameWidth = rootWidth;
+            gameHeight = rootHeight;
+            gameTop = 0;
+            controlsHeight = rootHeight;
+            surfaceParams = new RelativeLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
+            overlayParams = new RelativeLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
+            overlayParams.addRule(RelativeLayout.ALIGN_PARENT_TOP);
+        }
+
+        surfaceParams.addRule(RelativeLayout.ALIGN_PARENT_LEFT, 0);
+        ViewGroup.LayoutParams oldSurfaceParams = mSurface.getLayoutParams();
+        if (!(oldSurfaceParams instanceof RelativeLayout.LayoutParams)
+                || oldSurfaceParams.width != surfaceParams.width
+                || oldSurfaceParams.height != surfaceParams.height
+                || ((RelativeLayout.LayoutParams) oldSurfaceParams).topMargin != surfaceParams.topMargin) {
+            mSurface.setLayoutParams(surfaceParams);
+        }
+
+        overlayParams.addRule(RelativeLayout.ALIGN_PARENT_LEFT);
+        ViewGroup.LayoutParams oldOverlayParams = overlay.getLayoutParams();
+        if (!(oldOverlayParams instanceof RelativeLayout.LayoutParams)
+                || oldOverlayParams.width != overlayParams.width
+                || oldOverlayParams.height != overlayParams.height) {
+            overlay.setLayoutParams(overlayParams);
+        }
+        overlay.bringToFront();
     }
 
     @Override
@@ -200,6 +365,7 @@ public class Emulator extends SDLActivity
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        applyRequestedDisplayOrientation();
         if (!ensureNativeSessionInitialized()) {
             finish();
             return;
@@ -268,6 +434,10 @@ public class Emulator extends SDLActivity
     protected void onDestroy() {
         if (inputManager != null) {
             inputManager.unregisterInputDeviceListener(this);
+        }
+        if (portraitSplitRoot != null) {
+            portraitSplitRoot.removeOnLayoutChangeListener(portraitSplitLayoutListener);
+            portraitSplitRoot = null;
         }
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY);
         composeViewModelStore.clear();
@@ -341,6 +511,7 @@ public class Emulator extends SDLActivity
 
         overlay.setState(overlay_mask);
         overlay.setIsInEditMode(edit);
+        overlay.setVisibility((overlay_mask == 0 && !edit) ? View.GONE : View.VISIBLE);
 
         if(reset)
             overlay.resetButtonPlacement();
@@ -470,6 +641,7 @@ public class Emulator extends SDLActivity
         }
         if (pauseMenuView != null) {
             pauseMenuView.bringToFront();
+            pauseMenuView.setElevation(1000f);
         }
     }
 
@@ -939,6 +1111,7 @@ public class Emulator extends SDLActivity
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
         pauseMenuView.setVisibility(View.GONE);
+        pauseMenuView.setElevation(1000f);
         contentView.addView(pauseMenuView);
         ensureOverlayUiOrder();
         EmulationPauseMenuHost.attach(

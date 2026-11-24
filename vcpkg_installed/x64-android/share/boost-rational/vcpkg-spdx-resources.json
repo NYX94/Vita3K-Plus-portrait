@@ -1,0 +1,19 @@
+{
+  "packages": [
+{
+  "SPDXID" : "SPDXRef-resource-0",
+  "checksums" : 
+  [
+    {
+      "algorithm" : "SHA512",
+      "checksumValue" : "50c9e1405b8e0322b342408d5934122abcb96cf19060e832b484c6a95991e9bf201cc0ff10929aa65c75a81bb0f4b593089bc8ee6efefc9c8b04ffc10d62847c"
+    }
+  ],
+  "copyrightText" : "NOASSERTION",
+  "downloadLocation" : "git+https://github.com/boostorg/rational@boost-1.90.0",
+  "licenseConcluded" : "NOASSERTION",
+  "licenseDeclared" : "NOASSERTION",
+  "name" : "boostorg/rational"
+}
+  ]
+}

@@ -67,44 +67,55 @@ object OverlayStore {
     }
 
     @JvmStatic
-    fun loadGlobalState(context: Context): OverlayState {
+    @JvmOverloads
+    fun loadGlobalState(context: Context, portrait: Boolean = false): OverlayState {
         val prefs = preferences(context)
-        val fallback = legacyGlobalState(context)
-        return loadScopeState(prefs, scopeId = null, fallback = fallback)
+        val fallback = legacyGlobalState(context, portrait)
+        return loadScopeState(prefs, scopeId = null, fallback = fallback, portrait = portrait)
     }
 
     @JvmStatic
-    fun loadGameOverride(context: Context, scopeId: String?): OverlayState? {
+    @JvmOverloads
+    fun loadGameOverride(context: Context, scopeId: String?, portrait: Boolean = false): OverlayState? {
         val normalizedScopeId = normalizeScopeId(scopeId)
         if (normalizedScopeId.isEmpty() || !hasGameOverride(context, normalizedScopeId)) {
             return null
         }
-        return loadScopeState(preferences(context), normalizedScopeId, loadGlobalState(context))
+        val globalState = loadGlobalState(context, portrait)
+        return loadScopeState(preferences(context), normalizedScopeId, globalState, portrait)
     }
 
     @JvmStatic
-    fun resolveState(context: Context, scopeId: String?, allowGameOverride: Boolean): OverlayState {
+    @JvmOverloads
+    fun resolveState(
+        context: Context,
+        scopeId: String?,
+        allowGameOverride: Boolean,
+        portrait: Boolean = false
+    ): OverlayState {
         val normalizedScopeId = normalizeScopeId(scopeId)
-        val globalState = loadGlobalState(context)
+        val globalState = loadGlobalState(context, portrait)
         if (!allowGameOverride || normalizedScopeId.isEmpty() || !hasGameOverride(context, normalizedScopeId)) {
             return globalState
         }
-        return loadScopeState(preferences(context), normalizedScopeId, globalState)
+        return loadScopeState(preferences(context), normalizedScopeId, globalState, portrait)
     }
 
     @JvmStatic
-    fun saveGlobalState(context: Context, state: OverlayState) {
-        saveScopeState(context, scopeId = null, state = state, markOverride = false)
+    @JvmOverloads
+    fun saveGlobalState(context: Context, state: OverlayState, portrait: Boolean = false) {
+        saveScopeState(context, scopeId = null, state = state, markOverride = false, portrait = portrait)
     }
 
     @JvmStatic
-    fun saveGameOverride(context: Context, scopeId: String?, state: OverlayState) {
+    @JvmOverloads
+    fun saveGameOverride(context: Context, scopeId: String?, state: OverlayState, portrait: Boolean = false) {
         val normalizedScopeId = normalizeScopeId(scopeId)
         if (normalizedScopeId.isEmpty()) {
-            saveGlobalState(context, state)
+            saveGlobalState(context, state, portrait)
             return
         }
-        saveScopeState(context, normalizedScopeId, state, markOverride = true)
+        saveScopeState(context, normalizedScopeId, state, markOverride = true, portrait = portrait)
     }
 
     @JvmStatic
@@ -143,7 +154,32 @@ object OverlayStore {
     }
 
     @JvmStatic
-    fun defaultLayout(context: Context): OverlayLayout {
+    @JvmOverloads
+    fun defaultLayout(context: Context, portrait: Boolean = false): OverlayLayout {
+        if (portrait) {
+            val portraitPositions = mapOf(
+                InputOverlay.ButtonType.BUTTON_CROSS to OverlayPosition(0.78f, 0.57f),
+                InputOverlay.ButtonType.BUTTON_CIRCLE to OverlayPosition(0.88f, 0.45f),
+                InputOverlay.ButtonType.BUTTON_SQUARE to OverlayPosition(0.68f, 0.45f),
+                InputOverlay.ButtonType.BUTTON_TRIANGLE to OverlayPosition(0.78f, 0.33f),
+                InputOverlay.ButtonType.BUTTON_SELECT to OverlayPosition(0.22f, 0.87f),
+                InputOverlay.ButtonType.BUTTON_START to OverlayPosition(0.66f, 0.87f),
+                InputOverlay.ButtonType.BUTTON_PS to OverlayPosition(0.47f, 0.94f),
+                InputOverlay.ButtonType.DPAD_UP to OverlayPosition(0.04f, 0.31f),
+                InputOverlay.ButtonType.STICK_LEFT to OverlayPosition(0.04f, 0.69f),
+                InputOverlay.ButtonType.STICK_RIGHT to OverlayPosition(0.76f, 0.72f),
+                InputOverlay.ButtonType.TRIGGER_L to OverlayPosition(0.02f, 0.01f),
+                InputOverlay.ButtonType.TRIGGER_R to OverlayPosition(0.80f, 0.01f),
+                InputOverlay.ButtonType.TRIGGER_L2 to OverlayPosition(0.22f, 0.01f),
+                InputOverlay.ButtonType.TRIGGER_R2 to OverlayPosition(0.58f, 0.01f),
+                InputOverlay.ButtonType.TRIGGER_L3 to OverlayPosition(0.29f, 0.13f),
+                InputOverlay.ButtonType.TRIGGER_R3 to OverlayPosition(0.56f, 0.13f),
+                InputOverlay.ButtonType.BUTTON_TOUCH_HIDE to OverlayPosition(0.73f, 0.89f),
+                InputOverlay.ButtonType.BUTTON_TOUCH_SWITCH to OverlayPosition(0.45f, 0.08f)
+            )
+            return OverlayLayout(portraitPositions).normalized()
+        }
+
         val resources = context.resources
         val positions = defaultEntries.associate { entry ->
             entry.buttonType to OverlayPosition(
@@ -155,10 +191,11 @@ object OverlayStore {
     }
 
     @JvmStatic
-    fun defaultState(context: Context): OverlayState =
+    @JvmOverloads
+    fun defaultState(context: Context, portrait: Boolean = false): OverlayState =
         OverlayState(
             config = OverlayConfig().normalized(),
-            layout = defaultLayout(context)
+            layout = defaultLayout(context, portrait)
         )
 
     @JvmStatic
@@ -177,23 +214,31 @@ object OverlayStore {
     }
 
     @JvmStatic
-    fun loadLayout(context: Context, scopeId: String? = null, allowGameOverride: Boolean = false): OverlayLayout =
-        resolveState(context, scopeId, allowGameOverride).layout
+    @JvmOverloads
+    fun loadLayout(context: Context, scopeId: String? = null, allowGameOverride: Boolean = false, portrait: Boolean = false): OverlayLayout =
+        resolveState(context, scopeId, allowGameOverride, portrait).layout
 
     private fun loadScopeState(
         prefs: SharedPreferences,
         scopeId: String?,
-        fallback: OverlayState
+        fallback: OverlayState,
+        portrait: Boolean
     ): OverlayState {
         val normalizedScopeId = normalizeScopeId(scopeId)
-        val layout = loadStoredLayout(prefs, normalizedScopeId, fallback.layout)
+        val layout = loadStoredLayout(prefs, normalizedScopeId, fallback.layout, portrait)
         return OverlayState(
             config = loadStoredConfig(prefs, normalizedScopeId, fallback.config),
             layout = layout
         )
     }
 
-    private fun saveScopeState(context: Context, scopeId: String?, state: OverlayState, markOverride: Boolean) {
+    private fun saveScopeState(
+        context: Context,
+        scopeId: String?,
+        state: OverlayState,
+        markOverride: Boolean,
+        portrait: Boolean
+    ) {
         val normalizedScopeId = normalizeScopeId(scopeId)
         val normalizedState = OverlayState(
             config = state.config.normalized(),
@@ -208,7 +253,7 @@ object OverlayStore {
                 configKey(normalizedScopeId, KEY_HIDE_ON_CONTROLLER),
                 normalizedState.config.hideOverlayWhenControllerConnected
             )
-            saveLayoutEntries(this, normalizedScopeId, normalizedState.layout)
+            saveLayoutEntries(this, normalizedScopeId, normalizedState.layout, portrait)
             if (markOverride && normalizedScopeId.isNotEmpty()) {
                 putBoolean(overrideEnabledKey(normalizedScopeId), true)
             }
@@ -241,11 +286,12 @@ object OverlayStore {
     private fun loadStoredLayout(
         prefs: SharedPreferences,
         scopeId: String,
-        fallback: OverlayLayout
+        fallback: OverlayLayout,
+        portrait: Boolean
     ): OverlayLayout {
         val anyEntryPresent = defaultEntries.any { entry ->
-            prefs.contains(positionKey(scopeId, entry.buttonType, KEY_POSITION_X_SUFFIX)) &&
-                prefs.contains(positionKey(scopeId, entry.buttonType, KEY_POSITION_Y_SUFFIX))
+            prefs.contains(positionKey(scopeId, entry.buttonType, KEY_POSITION_X_SUFFIX, portrait)) &&
+                prefs.contains(positionKey(scopeId, entry.buttonType, KEY_POSITION_Y_SUFFIX, portrait))
         }
         if (!anyEntryPresent) {
             return fallback
@@ -255,11 +301,11 @@ object OverlayStore {
             val fallbackPosition = fallback.positionFor(entry.buttonType) ?: OverlayPosition(0f, 0f)
             entry.buttonType to OverlayPosition(
                 normalizedX = prefs.getFloat(
-                    positionKey(scopeId, entry.buttonType, KEY_POSITION_X_SUFFIX),
+                    positionKey(scopeId, entry.buttonType, KEY_POSITION_X_SUFFIX, portrait),
                     fallbackPosition.normalizedX
                 ).coerceNormalizedCoordinate(),
                 normalizedY = prefs.getFloat(
-                    positionKey(scopeId, entry.buttonType, KEY_POSITION_Y_SUFFIX),
+                    positionKey(scopeId, entry.buttonType, KEY_POSITION_Y_SUFFIX, portrait),
                     fallbackPosition.normalizedY
                 ).coerceNormalizedCoordinate()
             )
@@ -267,8 +313,8 @@ object OverlayStore {
         return OverlayLayout(positions).normalized()
     }
 
-    private fun legacyGlobalState(context: Context): OverlayState {
-        val defaultState = defaultState(context)
+    private fun legacyGlobalState(context: Context, portrait: Boolean): OverlayState {
+        val defaultState = defaultState(context, portrait)
         val legacyConfigPrefs = context.applicationContext.getSharedPreferences("emulation_session", Context.MODE_PRIVATE)
         val config = if (legacyConfigPrefs.contains(KEY_OVERLAY_MASK)) {
             OverlayConfig(
@@ -284,11 +330,9 @@ object OverlayStore {
             defaultState.config
         }
 
-        val legacyLayout = loadLegacyGlobalLayout(context, defaultState.layout)
-        return OverlayState(
-            config = config,
-            layout = legacyLayout
-        )
+        // The legacy coordinate format was landscape-only. Give portrait its own safe defaults.
+        val legacyLayout = if (portrait) defaultState.layout else loadLegacyGlobalLayout(context, defaultState.layout)
+        return OverlayState(config = config, layout = legacyLayout)
     }
 
     private fun loadLegacyGlobalLayout(context: Context, fallback: OverlayLayout): OverlayLayout {
@@ -317,14 +361,13 @@ object OverlayStore {
     private fun saveLayoutEntries(
         editor: SharedPreferences.Editor,
         scopeId: String,
-        layout: OverlayLayout
+        layout: OverlayLayout,
+        portrait: Boolean
     ) {
         defaultEntries.forEach { entry ->
             val position = layout.positionFor(entry.buttonType) ?: OverlayPosition(0f, 0f)
-            editor.putFloat(positionKey(scopeId, entry.buttonType, KEY_POSITION_X_SUFFIX), position.normalizedX)
-            editor.putFloat(positionKey(scopeId, entry.buttonType, KEY_POSITION_Y_SUFFIX), position.normalizedY)
-            editor.remove(scopePrefix(scopeId) + ":" + KEY_LAYOUT_PREFIX + ":portrait:" + entry.buttonType + KEY_POSITION_X_SUFFIX)
-            editor.remove(scopePrefix(scopeId) + ":" + KEY_LAYOUT_PREFIX + ":portrait:" + entry.buttonType + KEY_POSITION_Y_SUFFIX)
+            editor.putFloat(positionKey(scopeId, entry.buttonType, KEY_POSITION_X_SUFFIX, portrait), position.normalizedX)
+            editor.putFloat(positionKey(scopeId, entry.buttonType, KEY_POSITION_Y_SUFFIX, portrait), position.normalizedY)
         }
     }
 
@@ -334,10 +377,10 @@ object OverlayStore {
         editor.remove(configKey(scopeId, KEY_OVERLAY_OPACITY))
         editor.remove(configKey(scopeId, KEY_HIDE_ON_CONTROLLER))
         defaultEntries.forEach { entry ->
-            editor.remove(positionKey(scopeId, entry.buttonType, KEY_POSITION_X_SUFFIX))
-            editor.remove(positionKey(scopeId, entry.buttonType, KEY_POSITION_Y_SUFFIX))
-            editor.remove(scopePrefix(scopeId) + ":" + KEY_LAYOUT_PREFIX + ":portrait:" + entry.buttonType + KEY_POSITION_X_SUFFIX)
-            editor.remove(scopePrefix(scopeId) + ":" + KEY_LAYOUT_PREFIX + ":portrait:" + entry.buttonType + KEY_POSITION_Y_SUFFIX)
+            listOf(false, true).forEach { portrait ->
+                editor.remove(positionKey(scopeId, entry.buttonType, KEY_POSITION_X_SUFFIX, portrait))
+                editor.remove(positionKey(scopeId, entry.buttonType, KEY_POSITION_Y_SUFFIX, portrait))
+            }
         }
     }
 
@@ -349,8 +392,8 @@ object OverlayStore {
     private fun configKey(scopeId: String?, key: String): String =
         scopePrefix(scopeId) + ":" + KEY_CONFIG_PREFIX + ":" + key
 
-    private fun positionKey(scopeId: String?, buttonType: Int, suffix: String): String =
-        scopePrefix(scopeId) + ":" + KEY_LAYOUT_PREFIX + ":landscape:" + buttonType + suffix
+    private fun positionKey(scopeId: String?, buttonType: Int, suffix: String, portrait: Boolean = false): String =
+        scopePrefix(scopeId) + ":" + KEY_LAYOUT_PREFIX + ":" + (if (portrait) "portrait" else "landscape") + ":" + buttonType + suffix
 
     private fun scopePrefix(scopeId: String?): String {
         val normalizedScopeId = normalizeScopeId(scopeId)

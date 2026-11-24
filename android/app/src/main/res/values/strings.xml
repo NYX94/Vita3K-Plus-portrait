@@ -743,4 +743,17 @@
     <string name="trophy_detail_earned_label">Earned</string>
     <string name="trophy_detail_description_label">Details</string>
     <string name="trophy_not_yet_earned">Not yet earned</string>
+
+    <string name="settings_tab_display">Display</string>
+    <string name="settings_display_title">Display layout</string>
+    <string name="settings_display_orientation">Screen orientation</string>
+    <string name="settings_display_portrait">Portrait split</string>
+    <string name="settings_display_landscape">Landscape</string>
+    <string name="settings_display_orientation_desc">Portrait places the landscape game image above a separate virtual control area. Landscape uses the normal full-screen game view.</string>
+    <string name="settings_display_game_size">Game image size</string>
+    <string name="settings_display_game_size_desc">Adjust the width of the landscape game image in portrait mode. The image keeps the Vita aspect ratio.</string>
+    <string name="settings_display_game_position">Game image vertical position</string>
+    <string name="settings_display_game_position_desc">Move the game image down within the upper part of the portrait screen while keeping room for the controls.</string>
+    <string name="settings_display_percent">%1$d%%</string>
+
 </resources>

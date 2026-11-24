@@ -1,0 +1,19 @@
+{
+  "packages": [
+{
+  "SPDXID" : "SPDXRef-resource-0",
+  "checksums" : 
+  [
+    {
+      "algorithm" : "SHA512",
+      "checksumValue" : "46563aa599249cb754a33bd4af551d787ac02e85fad3ee7a5986130b0797027d8bc8b3f143b2298e120dbf1e5301bc6a6d3d2f688deb23f91705834b4b5f189b"
+    }
+  ],
+  "copyrightText" : "NOASSERTION",
+  "downloadLocation" : "git+https://github.com/boostorg/mp11@boost-1.90.0",
+  "licenseConcluded" : "NOASSERTION",
+  "licenseDeclared" : "NOASSERTION",
+  "name" : "boostorg/mp11"
+}
+  ]
+}

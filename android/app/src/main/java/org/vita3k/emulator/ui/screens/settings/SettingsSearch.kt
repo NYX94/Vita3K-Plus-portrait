@@ -98,6 +98,11 @@ internal fun rememberSettingsSearchEntries(
         add(entry(SettingsCategory.System, R.string.settings_system_date_format, R.string.settings_system_date_format_desc))
         add(entry(SettingsCategory.System, R.string.settings_system_time_format, R.string.settings_system_time_format_desc))
         add(entry(SettingsCategory.System, R.string.settings_system_ime_langs, R.string.settings_system_ime_langs_desc))
+        if (!isPerApp) {
+            add(entry(SettingsCategory.Display, R.string.settings_display_orientation, R.string.settings_display_orientation_desc, scope = SettingsScope.Global, keywords = "portrait landscape split screen rotation"))
+            add(entry(SettingsCategory.Display, R.string.settings_display_game_size, R.string.settings_display_game_size_desc, scope = SettingsScope.Global, keywords = "viewport zoom size"))
+            add(entry(SettingsCategory.Display, R.string.settings_display_game_position, R.string.settings_display_game_position_desc, scope = SettingsScope.Global, keywords = "viewport position vertical offset"))
+        }
         add(entry(SettingsCategory.Controls, R.string.settings_controls_show, R.string.settings_controls_show_desc, scope = SettingsScope.Global, keywords = "overlay touch buttons"))
         add(entry(SettingsCategory.Controls, R.string.settings_controls_hide_on_controller, R.string.settings_controls_hide_on_controller_desc, scope = SettingsScope.Global, keywords = "gamepad controller overlay hide"))
         add(entry(SettingsCategory.Controls, R.string.settings_controls_l2r2, R.string.settings_controls_l2r2_desc, scope = SettingsScope.Global, keywords = "touch triggers shoulder buttons"))

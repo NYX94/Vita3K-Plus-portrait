@@ -225,6 +225,12 @@ internal fun SettingsCategoryBody(
     onResetControlsLayout: (() -> Unit)? = null,
     controllerConnected: Boolean = false,
     connectedGamepads: List<ConnectedGamepad> = emptyList(),
+    displayPortraitMode: Boolean = true,
+    onDisplayPortraitModeChange: (Boolean) -> Unit = {},
+    portraitDisplayScale: Int = 100,
+    onPortraitDisplayScaleChange: (Int) -> Unit = {},
+    portraitDisplayOffset: Int = 0,
+    onPortraitDisplayOffsetChange: (Int) -> Unit = {},
     onShowHelp: (SettingsHelpEntry) -> Unit
 ) {
     when (category) {
@@ -267,6 +273,15 @@ internal fun SettingsCategoryBody(
             allowImagePicker = allowCameraImagePicker
         )
         SettingsCategory.System -> SystemSettingsSection(cfg = cfg, isPerApp = isPerApp, onUpdate = onUpdate, onShowHelp = onShowHelp)
+        SettingsCategory.Display -> DisplaySettingsSection(
+            portraitMode = displayPortraitMode,
+            onPortraitModeChange = onDisplayPortraitModeChange,
+            gameScale = portraitDisplayScale,
+            onGameScaleChange = onPortraitDisplayScaleChange,
+            gameOffset = portraitDisplayOffset,
+            onGameOffsetChange = onPortraitDisplayOffsetChange,
+            onShowHelp = onShowHelp
+        )
         SettingsCategory.Controls -> OverlaySettingsSection(
             cfg = cfg,
             overlayConfig = overlayConfig,
@@ -311,6 +326,72 @@ internal fun SettingsCategoryBody(
             onUpdate = onUpdate,
             onShowHelp = onShowHelp
         )
+    }
+}
+
+
+@Composable
+private fun DisplaySettingsSection(
+    portraitMode: Boolean,
+    onPortraitModeChange: (Boolean) -> Unit,
+    gameScale: Int,
+    onGameScaleChange: (Int) -> Unit,
+    gameOffset: Int,
+    onGameOffsetChange: (Int) -> Unit,
+    onShowHelp: (SettingsHelpEntry) -> Unit
+) {
+    SettingsSectionCard(
+        title = stringResource(R.string.settings_display_title),
+        summary = null,
+        help = null,
+        onShowHelp = onShowHelp
+    ) {
+        SettingsChoiceField(
+            title = stringResource(R.string.settings_display_orientation),
+            options = listOf(
+                stringResource(R.string.settings_display_portrait),
+                stringResource(R.string.settings_display_landscape)
+            ),
+            selectedIndex = if (portraitMode) 0 else 1,
+            onSelect = { onPortraitModeChange(it == 0) },
+            help = SettingsHelpEntry(
+                title = stringResource(R.string.settings_display_orientation),
+                body = stringResource(R.string.settings_display_orientation_desc),
+                scope = SettingsScope.Global
+            ),
+            onShowHelp = onShowHelp
+        )
+
+        if (portraitMode) {
+            SettingsSliderRow(
+                title = stringResource(R.string.settings_display_game_size),
+                valueLabel = stringResource(R.string.settings_display_percent, gameScale),
+                value = gameScale.toFloat(),
+                onValueChange = { onGameScaleChange(it.toInt().coerceIn(70, 100)) },
+                valueRange = 70f..100f,
+                steps = 29,
+                help = SettingsHelpEntry(
+                    title = stringResource(R.string.settings_display_game_size),
+                    body = stringResource(R.string.settings_display_game_size_desc),
+                    scope = SettingsScope.Global
+                ),
+                onShowHelp = onShowHelp
+            )
+            SettingsSliderRow(
+                title = stringResource(R.string.settings_display_game_position),
+                valueLabel = stringResource(R.string.settings_display_percent, gameOffset),
+                value = gameOffset.toFloat(),
+                onValueChange = { onGameOffsetChange(it.toInt().coerceIn(0, 100)) },
+                valueRange = 0f..100f,
+                steps = 99,
+                help = SettingsHelpEntry(
+                    title = stringResource(R.string.settings_display_game_position),
+                    body = stringResource(R.string.settings_display_game_position_desc),
+                    scope = SettingsScope.Global
+                ),
+                onShowHelp = onShowHelp
+            )
+        }
     }
 }
 

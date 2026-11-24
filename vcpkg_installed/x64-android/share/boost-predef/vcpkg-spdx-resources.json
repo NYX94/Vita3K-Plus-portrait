@@ -1,0 +1,19 @@
+{
+  "packages": [
+{
+  "SPDXID" : "SPDXRef-resource-0",
+  "checksums" : 
+  [
+    {
+      "algorithm" : "SHA512",
+      "checksumValue" : "8c6ced3db730d98067d393d7669bc16d19eb4b05aad19d59addd2e0087dac54917d097159d39c619f5398ffc5d7cef43f9af94f376ab0734f8910e69e1c7a592"
+    }
+  ],
+  "copyrightText" : "NOASSERTION",
+  "downloadLocation" : "git+https://github.com/boostorg/predef@boost-1.90.0",
+  "licenseConcluded" : "NOASSERTION",
+  "licenseDeclared" : "NOASSERTION",
+  "name" : "boostorg/predef"
+}
+  ]
+}

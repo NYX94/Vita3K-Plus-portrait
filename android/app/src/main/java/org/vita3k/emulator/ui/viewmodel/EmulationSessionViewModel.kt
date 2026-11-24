@@ -36,6 +36,11 @@ data class EmulationSessionUiState(
 
 class EmulationSessionViewModel(application: Application) : AndroidViewModel(application) {
 
+    private fun isPortraitLayoutEnabled(): Boolean =
+        getApplication<Application>()
+            .getSharedPreferences("display_layout_preferences", android.content.Context.MODE_PRIVATE)
+            .getBoolean("portrait_layout_enabled", true)
+
     private var initialized = false
     private var useGameOverlayOverride = false
 
@@ -250,7 +255,7 @@ class EmulationSessionViewModel(application: Application) : AndroidViewModel(app
     }
 
     fun resetControlsLayout(emulator: Emulator) {
-        val defaultLayout = OverlayStore.defaultLayout(getApplication())
+        val defaultLayout = OverlayStore.defaultLayout(getApplication(), isPortraitLayoutEnabled())
         emulator.setControllerOverlayLayout(defaultLayout)
         val updatedOverlayState = OverlayState(
             config = currentOverlayConfig(),
@@ -302,7 +307,7 @@ class EmulationSessionViewModel(application: Application) : AndroidViewModel(app
             return
         }
 
-        OverlayStore.saveGameOverride(getApplication(), titleId, captureOverlayState(emulator))
+        OverlayStore.saveGameOverride(getApplication(), titleId, captureOverlayState(emulator), isPortraitLayoutEnabled())
         useGameOverlayOverride = true
     }
 
@@ -337,9 +342,9 @@ class EmulationSessionViewModel(application: Application) : AndroidViewModel(app
 
     private fun persistOverlayState(state: OverlayState) {
         if (useGameOverlayOverride && uiState.titleId.isNotBlank()) {
-            OverlayStore.saveGameOverride(getApplication(), uiState.titleId, state)
+            OverlayStore.saveGameOverride(getApplication(), uiState.titleId, state, isPortraitLayoutEnabled())
         } else {
-            OverlayStore.saveGlobalState(getApplication(), state)
+            OverlayStore.saveGlobalState(getApplication(), state, isPortraitLayoutEnabled())
         }
     }
 
@@ -348,7 +353,8 @@ class EmulationSessionViewModel(application: Application) : AndroidViewModel(app
         val overlayState = OverlayStore.resolveState(
             context = getApplication(),
             scopeId = titleId,
-            allowGameOverride = useGameOverride
+            allowGameOverride = useGameOverride,
+            portrait = isPortraitLayoutEnabled()
         )
         return useGameOverride to overlayState
     }

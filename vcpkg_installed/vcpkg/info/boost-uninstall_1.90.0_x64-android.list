@@ -1,0 +1,7 @@
+x64-android/
+x64-android/share/
+x64-android/share/boost-uninstall/
+x64-android/share/boost-uninstall/vcpkg.spdx.json
+x64-android/share/boost-uninstall/vcpkg_abi_info.txt
+x64-android/share/boost/
+x64-android/share/boost/vcpkg-cmake-wrapper.cmake
