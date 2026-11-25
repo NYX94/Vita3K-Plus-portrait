@@ -17,6 +17,9 @@
 
 #include <display/functions.h>
 
+#include <cheat/functions.h>
+#include <ctrl/functions.h>
+
 #include <dialog/state.h>
 #include <display/state.h>
 #include <emuenv/state.h>
@@ -38,13 +41,20 @@ static constexpr int max_expected_swapchain_size = 6;
 static void vblank_sync_thread(EmuEnvState &emuenv) {
     DisplayState &display = emuenv.display;
 
+    const cheat::JitInvalidate invalidate_jit = [&emuenv](uint32_t address, size_t size) {
+        emuenv.kernel.invalidate_jit_cache(address, size);
+    };
+
     while (!display.abort.load()) {
+        bool has_frame = false;
         {
             const std::lock_guard<std::mutex> guard(display.mutex);
 
             {
                 const std::lock_guard<std::mutex> guard_info(display.display_info_mutex);
                 ++display.vblank_count;
+
+                has_frame = static_cast<bool>(display.sce_frame.base);
 
                 // in this case, even though no new game frames are being rendered, we still need to update the screen
                 if (emuenv.kernel.is_threads_paused() || (emuenv.common_dialog.status == SCE_COMMON_DIALOG_STATUS_RUNNING))
@@ -75,6 +85,15 @@ static void vblank_sync_thread(EmuEnvState &emuenv) {
                 }
             }
         }
+
+        if (has_frame)
+            emuenv.cheat.count_frame();
+
+        // Apply enabled cheats once per vblank, outside display.mutex.
+        if (cheat::enabled_cheat_count(emuenv.cheat) != 0)
+            cheat::set_buttons(emuenv.cheat, ctrl_peek_buttons(emuenv, 1));
+        cheat::apply(emuenv.cheat, emuenv.mem, invalidate_jit);
+
         const auto time_ms = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
         const auto time_left = TARGET_MICRO_PER_FRAME - (time_ms % TARGET_MICRO_PER_FRAME);
         std::this_thread::sleep_for(std::chrono::microseconds(time_left));

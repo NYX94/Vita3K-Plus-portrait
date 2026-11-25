@@ -186,16 +186,37 @@ void KernelState::request_process_exit(int res, std::optional<AppLaunchRequest> 
 }
 
 void KernelState::process_exit() {
+    std::vector<ThreadStatePtr> exiting_threads;
+
     {
         std::lock_guard<std::mutex> lock(mutex);
+
         for (auto &[_, timer] : timers)
             timer->condvar.notify_all();
-        for (auto &[_, thread] : threads)
+
+        exiting_threads.reserve(threads.size());
+
+        for (auto &[_, thread] : threads) {
+            exiting_threads.push_back(thread);
             thread->exit_delete(false);
+        }
     }
 
-    std::unique_lock<std::mutex> lock(mutex);
-    thread_deleted_cond.wait(lock, [this] { return threads.empty(); });
+    // Wait for every detached SDL worker to finish and remove its
+    // ThreadState from the kernel thread map.
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        thread_deleted_cond.wait(lock, [this] {
+            return threads.empty();
+        });
+    }
+
+    // Break references between threads that were waiting for one another.
+    // All guest worker loops have finished before this point.
+    for (const auto &thread : exiting_threads) {
+        std::lock_guard<std::mutex> thread_lock(thread->mutex);
+        thread->waiting_threads.clear();
+    }
 }
 
 void KernelState::pause_threads() {
@@ -273,6 +294,16 @@ void KernelState::deinit(MemState &mem) {
     next_uid = 1;
 
     paused_threads_status.clear();
+
+    // Kernel containers and their ThreadState references have now been
+    // released. Wait for remaining shared references and ThreadState member
+    // destruction before the caller deallocates MemState.
+    {
+        std::unique_lock<std::mutex> lock(thread_lifetime_mutex);
+        thread_lifetime_cond.wait(lock, [this] {
+            return live_thread_states == 0;
+        });
+    }
 }
 
 SceKernelModuleInfo *KernelState::find_module_by_addr(Address address) {

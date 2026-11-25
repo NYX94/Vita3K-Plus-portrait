@@ -400,8 +400,25 @@ uint32_t ThreadState::run_guest_function(Address callback_address, SceSize args,
     return returned_value;
 }
 
+ThreadState::Lifetime::Lifetime(KernelState &kernel)
+    : kernel(kernel) {
+    const std::lock_guard<std::mutex> lock(kernel.thread_lifetime_mutex);
+    ++kernel.live_thread_states;
+}
+
+ThreadState::Lifetime::~Lifetime() {
+    {
+        const std::lock_guard<std::mutex> lock(kernel.thread_lifetime_mutex);
+        assert(kernel.live_thread_states > 0);
+        --kernel.live_thread_states;
+    }
+
+    kernel.thread_lifetime_cond.notify_all();
+}
+
 ThreadState::ThreadState(SceUID id, KernelState &kernel, MemState &mem)
-    : id(id)
+    : lifetime(kernel)
+    , id(id)
     , kernel(kernel)
     , mem(mem) {
 }

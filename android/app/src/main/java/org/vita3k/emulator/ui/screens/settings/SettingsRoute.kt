@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -39,6 +40,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -46,6 +48,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -653,6 +656,15 @@ private fun SettingsContentPane(
     onResetControlsLayout: (() -> Unit)?,
     onShowHelp: (SettingsHelpEntry) -> Unit,
 ) {
+    var visitedCategories by remember(titleId) {
+        mutableStateOf(setOf(selectedCategory))
+    }
+
+    fun selectCategory(category: SettingsCategory) {
+        visitedCategories = visitedCategories + category
+        onSelectedCategoryChange(category)
+    }
+
     Column(
         modifier = modifier
             .verticalScroll(scrollState)
@@ -677,61 +689,81 @@ private fun SettingsContentPane(
         SettingsCategoryStrip(
             categories = categories,
             selectedCategory = selectedCategory,
-            onCategorySelected = onSelectedCategoryChange
+            onCategorySelected = ::selectCategory
         )
 
-        if (searchQuery.isBlank()) {
-            SettingsCategoryBody(
-                category = selectedCategory,
-                cfg = viewModel.config,
-                overlayConfig = overlayConfig,
-                modulesList = viewModel.modulesList,
-                modulesSearch = viewModel.modulesSearch,
-                onModulesSearchChange = viewModel::onModulesSearchChange,
-                onToggleModule = viewModel::toggleModule,
-                supportedMemoryMappingMask = supportedMemoryMappingMask,
-                customDriverLoadStatus = customDriverLoadStatus,
-                availableCameras = availableCameras,
-                availableAdhocAddresses = availableAdhocAddresses,
-                currentStoragePath = currentStoragePath,
-                defaultStoragePath = viewModel.defaultStoragePath,
-                onChangeStorageFolder = onChangeStorageFolder,
-                onResetStorageFolder = onResetStorageFolder,
-                installedCustomDrivers = viewModel.installedCustomDrivers,
-                customDriverBusy = viewModel.customDriverBusy,
-                onInstallCustomDriver = onInstallCustomDriver,
-                onDownloadCustomDriver = onDownloadCustomDriver,
-                onPickCameraImage = onPickCameraImage,
-                onRequestRemoveCustomDriver = onRequestRemoveCustomDriver,
-                isPerApp = isPerApp,
-                showCustomDriverManagement = viewModel.showCustomDriverOptions,
-                showTurboModeOption = viewModel.showCustomDriverOptions,
-                onClearAllCustomConfigs = onClearAllCustomConfigs,
-                onSelectCustomDriver = viewModel::selectCustomDriver,
-                onUpdate = viewModel::update,
-                onOverlayConfigChange = onOverlayConfigChange,
-                onStartControlsEditor = onStartControlsEditor,
-                onResetControlsLayout = onResetControlsLayout,
-                controllerConnected = controllerConnected,
-                connectedGamepads = connectedGamepads,
-                displayPortraitMode = displayPortraitMode,
-                onDisplayPortraitModeChange = onDisplayPortraitModeChange,
-                portraitDisplayScale = portraitDisplayScale,
-                onPortraitDisplayScaleChange = onPortraitDisplayScaleChange,
-                portraitDisplayOffset = portraitDisplayOffset,
-                onPortraitDisplayOffsetChange = onPortraitDisplayOffsetChange,
-                onShowHelp = onShowHelp
-            )
-        } else {
-            SettingsSearchResults(
-                query = searchQuery,
-                entries = searchEntries,
-                onOpen = {
-                    onSelectedCategoryChange(it)
-                    onCloseSearch()
-                },
-                onShowHelp = onShowHelp
-            )
+        Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
+            if (searchQuery.isNotBlank()) {
+                SettingsSearchResults(
+                    query = searchQuery,
+                    entries = searchEntries,
+                    onOpen = {
+                        selectCategory(it)
+                        onCloseSearch()
+                    },
+                    onShowHelp = onShowHelp
+                )
+            }
+
+            categories.forEach { category ->
+                if (category in visitedCategories) {
+                    key(category) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .then(
+                                    if (searchQuery.isBlank() && category == selectedCategory) {
+                                        Modifier
+                                    } else {
+                                        Modifier.height(0.dp).clipToBounds()
+                                    }
+                                )
+                        ) {
+                            SettingsCategoryBody(
+                                category = category,
+                                cfg = viewModel.config,
+                                overlayConfig = overlayConfig,
+                                modulesList = viewModel.modulesList,
+                                modulesSearch = viewModel.modulesSearch,
+                                onModulesSearchChange = viewModel::onModulesSearchChange,
+                                onToggleModule = viewModel::toggleModule,
+                                supportedMemoryMappingMask = supportedMemoryMappingMask,
+                                customDriverLoadStatus = customDriverLoadStatus,
+                                availableCameras = availableCameras,
+                                availableAdhocAddresses = availableAdhocAddresses,
+                                currentStoragePath = currentStoragePath,
+                                defaultStoragePath = viewModel.defaultStoragePath,
+                                onChangeStorageFolder = onChangeStorageFolder,
+                                onResetStorageFolder = onResetStorageFolder,
+                                installedCustomDrivers = viewModel.installedCustomDrivers,
+                                customDriverBusy = viewModel.customDriverBusy,
+                                onInstallCustomDriver = onInstallCustomDriver,
+                                onDownloadCustomDriver = onDownloadCustomDriver,
+                                onPickCameraImage = onPickCameraImage,
+                                onRequestRemoveCustomDriver = onRequestRemoveCustomDriver,
+                                isPerApp = isPerApp,
+                                showCustomDriverManagement = viewModel.showCustomDriverOptions,
+                                showTurboModeOption = viewModel.showCustomDriverOptions,
+                                onClearAllCustomConfigs = onClearAllCustomConfigs,
+                                onSelectCustomDriver = viewModel::selectCustomDriver,
+                                onUpdate = viewModel::update,
+                                onOverlayConfigChange = onOverlayConfigChange,
+                                onStartControlsEditor = onStartControlsEditor,
+                                onResetControlsLayout = onResetControlsLayout,
+                                controllerConnected = controllerConnected,
+                                connectedGamepads = connectedGamepads,
+                                displayPortraitMode = displayPortraitMode,
+                                onDisplayPortraitModeChange = onDisplayPortraitModeChange,
+                                portraitDisplayScale = portraitDisplayScale,
+                                onPortraitDisplayScaleChange = onPortraitDisplayScaleChange,
+                                portraitDisplayOffset = portraitDisplayOffset,
+                                onPortraitDisplayOffsetChange = onPortraitDisplayOffsetChange,
+                                onShowHelp = onShowHelp
+                            )
+                        }
+                    }
+                }
+            }
         }
 
         if (titleId == null && (viewModel.isDirty || hasOverlayChanges)) {

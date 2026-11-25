@@ -1085,7 +1085,16 @@ public class Emulator extends SDLActivity
         if (controller != null) {
             controller.setSystemBarsBehavior(
                     WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
-            controller.hide(WindowInsetsCompat.Type.systemBars());
+
+            if (isPortraitLayoutEnabled()) {
+                // Keep the status bar visible in portrait, but retain the hidden
+                // navigation bar so the portrait game/control layout keeps its space.
+                controller.show(WindowInsetsCompat.Type.statusBars());
+                controller.hide(WindowInsetsCompat.Type.navigationBars());
+            } else {
+                // Landscape remains fully immersive.
+                controller.hide(WindowInsetsCompat.Type.systemBars());
+            }
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             WindowManager.LayoutParams attributes = getWindow().getAttributes();

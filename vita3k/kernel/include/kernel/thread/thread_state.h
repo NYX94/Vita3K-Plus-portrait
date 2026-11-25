@@ -59,6 +59,12 @@ private:
 };
 
 struct ThreadState {
+    struct Lifetime {
+        explicit Lifetime(KernelState &kernel);
+        ~Lifetime();
+
+        KernelState &kernel;
+    } lifetime;
     std::mutex mutex;
     std::string name;
     SceUID id;
