@@ -757,4 +757,5 @@
     <string name="settings_display_game_position_desc">Move the game image down within the upper part of the portrait screen while keeping room for the controls.</string>
     <string name="settings_display_percent">%1$d%%</string>
 
+    <string name="emulation_tab_cheats">Cheats</string>
 </resources>

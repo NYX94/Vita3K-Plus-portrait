@@ -359,13 +359,28 @@ CheatFile parse_cheat_file(const fs::path &path, const std::string &title_id) {
         ++code_count;
     }
 
-    // A declaration without any code line would silently do nothing, drop it.
+    // A declaration without any code line would silently do nothing. Some
+    // public VitaCheat databases encode headings/notes as a single all-zero
+    // placeholder code. Drop those entries instead of exposing them as cheats.
     std::erase_if(file.cheats, [&](const Cheat &cheat) {
+        const bool placeholder_only = !cheat.lines.empty()
+            && std::all_of(cheat.lines.begin(), cheat.lines.end(), [](const CodeLine &code) {
+                return code.control == 0 && code.first == 0 && code.second == 0;
+            });
+        if (placeholder_only) {
+            LOG_DEBUG("Ignoring zero-filled note/heading '{}' in cheat file {}", cheat.name, path);
+            return true;
+        }
         if (!cheat.lines.empty())
             return false;
         LOG_WARN("Cheat '{}' of {} has no code line, ignoring it", cheat.name, path);
         return true;
     });
+
+    // Report only code lines belonging to retained, executable entries.
+    code_count = 0;
+    for (const auto &cheat : file.cheats)
+        code_count += cheat.lines.size();
 
     LOG_INFO("Loaded {} cheats ({} codes) for {} from {}", file.cheats.size(), code_count, title_id, path);
 
@@ -415,18 +430,26 @@ std::string format_code_line(const CodeLine &code) {
     return fmt::format("${:04X} {:08X} {:08X}", code.control, code.first, code.second);
 }
 
-bool append_cheat(const fs::path &path, const std::string &title_id, const Cheat &cheat) {
+bool append_cheats(const fs::path &path, const std::string &title_id, const std::vector<Cheat> &cheats) {
+    if (cheats.empty())
+        return true;
+
     boost::system::error_code error;
     const bool exists = fs::exists(path, error);
     std::vector<std::string> lines = exists ? read_lines(path) : std::vector<std::string>{};
-
-    // Keep the line endings the file already uses.
     const std::string eol = (!lines.empty() && lines.front().ends_with('\r')) ? "\r" : "";
-
     std::vector<std::string> added;
-    added.push_back(fmt::format("_V{} {}", cheat.enabled_on_boot ? 1 : 0, cheat.name) + eol);
-    for (const auto &code : cheat.lines)
-        added.push_back(format_code_line(code) + eol);
+    for (const auto &cheat : cheats) {
+        added.push_back(fmt::format("_V{} {}", cheat.enabled_on_boot ? 1 : 0, cheat.name) + eol);
+        for (const auto &code : cheat.lines)
+            added.push_back(format_code_line(code) + eol);
+        // Preserve a parser/validator failure across conversion from a combined DB to a per-game file.
+        if (cheat.broken) {
+            CodeLine invalid_marker;
+            invalid_marker.control = 0xF000;
+            added.push_back(format_code_line(invalid_marker) + eol);
+        }
+    }
 
     const std::string wanted = string_utils::toupper(title_id);
     bool has_sections = false;
@@ -435,7 +458,6 @@ bool append_cheat(const fs::path &path, const std::string &title_id, const Cheat
         const std::string line = clean_line(lines[i]);
         if (!is_section_declaration(line))
             continue;
-
         has_sections = true;
         if (section_title_id(line) == wanted) {
             section_end = i + 1;
@@ -450,7 +472,6 @@ bool append_cheat(const fs::path &path, const std::string &title_id, const Cheat
         lines.push_back(fmt::format("_S {}", wanted) + eol);
 
     size_t position = section_end.value_or(lines.size());
-    // Right after the last code of the game, not after the blank lines that part it from the next one.
     while ((position > 0) && clean_line(lines[position - 1]).empty())
         --position;
     lines.insert(lines.begin() + position, added.begin(), added.end());
@@ -460,8 +481,56 @@ bool append_cheat(const fs::path &path, const std::string &title_id, const Cheat
     if (!write_lines(path, lines))
         return false;
 
-    LOG_INFO("Added cheat '{}' for {} to {}", cheat.name, wanted, path);
+    LOG_INFO("Added {} cheats for {} to {}", cheats.size(), wanted, path);
     return true;
 }
 
+bool append_cheat(const fs::path &path, const std::string &title_id, const Cheat &cheat) {
+    return append_cheats(path, title_id, std::vector<Cheat>{ cheat });
+}
+
+bool replace_cheat(const CheatFile &file, size_t index, const Cheat &replacement) {
+    if (file.path.empty() || index >= file.cheats.size() || replacement.name.empty() || replacement.lines.empty())
+        return false;
+
+    boost::system::error_code error;
+    if (!fs::is_regular_file(file.path, error))
+        return false;
+
+    std::vector<std::string> lines = read_lines(file.path);
+    const size_t start = file.cheats[index].line_number > 0 ? file.cheats[index].line_number - 1 : lines.size();
+    if (start >= lines.size())
+        return false;
+
+    const std::string current = clean_line(lines[start]);
+    if (!is_cheat_declaration(current))
+        return false;
+
+    size_t end = start + 1;
+    while (end < lines.size()) {
+        const std::string line = clean_line(lines[end]);
+        if (is_section_declaration(line) || is_cheat_declaration(line))
+            break;
+        ++end;
+    }
+
+    const std::string original = lines[start];
+    const size_t indent = original.find('_');
+    std::vector<std::string> replacement_lines;
+    replacement_lines.push_back(std::string(indent == std::string::npos ? 0 : indent, ' ')
+        + fmt::format("_V{} {}", replacement.enabled_on_boot ? 1 : 0, replacement.name));
+    for (const auto &code : replacement.lines)
+        replacement_lines.push_back(format_code_line(code));
+
+    // Keep human-readable comments and blank separators from the edited block.
+    for (size_t i = start + 1; i < end; ++i) {
+        const std::string line = clean_line(lines[i]);
+        if (line.empty() || line.front() != '$')
+            replacement_lines.push_back(lines[i]);
+    }
+
+    lines.erase(lines.begin() + start, lines.begin() + end);
+    lines.insert(lines.begin() + start, replacement_lines.begin(), replacement_lines.end());
+    return write_lines(file.path, lines);
+}
 } // namespace cheat

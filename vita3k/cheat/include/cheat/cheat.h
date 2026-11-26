@@ -110,7 +110,12 @@ CheatFile parse_cheat_file(const fs::path &path, const std::string &title_id);
 bool save_cheat_file(const CheatFile &file);
 
 // Add `cheat` after the other cheats of `title_id` in `path`, creating the file when it is missing.
+// Append multiple entries in one atomic rewrite, useful when importing a database section.
+bool append_cheats(const fs::path &path, const std::string &title_id, const std::vector<Cheat> &cheats);
 bool append_cheat(const fs::path &path, const std::string &title_id, const Cheat &cheat);
+
+// Replace one parsed cheat while keeping every other game and cheat in the source file intact.
+bool replace_cheat(const CheatFile &file, size_t index, const Cheat &replacement);
 
 std::string format_code_line(const CodeLine &code);
 

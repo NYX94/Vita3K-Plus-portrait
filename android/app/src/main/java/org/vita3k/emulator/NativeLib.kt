@@ -11,6 +11,20 @@ import org.vita3k.emulator.data.NativeUser
  * All methods are implemented in the native Android JNI modules under vita3k/android/jni/.
  * Game boot/stop is handled by the SDL-based Emulator activity.
  */
+data class NativeCheatEntry(
+    val name: String,
+    val enabled: Boolean,
+    val broken: Boolean,
+    val enabledOnBoot: Boolean,
+    val codes: String
+)
+
+data class NativeCheatSnapshot(
+    val titleId: String,
+    val masterEnabled: Boolean,
+    val cheats: List<NativeCheatEntry>
+)
+
 object NativeLib {
     const val PAUSE_REASON_USER = 1 shl 0
     const val PAUSE_REASON_MENU = 1 shl 1
@@ -154,5 +168,35 @@ object NativeLib {
      * where "true" means the module is in [currentModules].
      */
     external fun getModulesList(currentModules: Array<String>): Array<String>
+
+    // --- Running-game VitaCheat manager ---
+    private external fun getCheatSnapshotRaw(): Array<String>
+    external fun setCheatEnabled(index: Int, enabled: Boolean): Boolean
+    external fun setAllCheatsEnabled(enabled: Boolean): Boolean
+    external fun saveCheats(): Boolean
+    external fun addCheat(name: String, codes: String, enabledOnBoot: Boolean): Boolean
+    external fun editCheat(index: Int, name: String, codes: String, enabledOnBoot: Boolean): Boolean
+    external fun importCheatFile(path: String, titleId: String): String
+
+    fun getCheatSnapshot(): NativeCheatSnapshot {
+        val raw = getCheatSnapshotRaw()
+        val count = (raw.getOrNull(2)?.toIntOrNull() ?: 0).coerceIn(0, raw.size / 5)
+        val entries = (0 until count).mapNotNull { index ->
+            val offset = 3 + index * 5
+            if (offset + 4 >= raw.size) return@mapNotNull null
+            NativeCheatEntry(
+                name = raw[offset],
+                enabled = raw[offset + 1] == "1",
+                broken = raw[offset + 2] == "1",
+                enabledOnBoot = raw[offset + 3] == "1",
+                codes = raw[offset + 4]
+            )
+        }
+        return NativeCheatSnapshot(
+            titleId = raw.getOrNull(0).orEmpty(),
+            masterEnabled = raw.getOrNull(1) == "1",
+            cheats = entries
+        )
+    }
 
 }
