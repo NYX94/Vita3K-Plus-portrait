@@ -1,6 +1,7 @@
 package org.vita3k.emulator.ui.screens.emulation
 
 import android.view.View
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -74,6 +75,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.vita3k.emulator.Emulator
+import org.vita3k.emulator.NativeLib
 import org.vita3k.emulator.R
 import org.vita3k.emulator.data.RestartRequiredSetting
 import org.vita3k.emulator.ui.components.OverlayEditorPalette
@@ -93,6 +95,7 @@ import org.vita3k.emulator.ui.theme.ApplyDialogDim
 import org.vita3k.emulator.ui.theme.Vita3KTheme
 import org.vita3k.emulator.ui.viewmodel.EmulationSessionViewModel
 import org.vita3k.emulator.ui.viewmodel.SettingsViewModel
+import kotlinx.coroutines.delay
 
 private enum class PauseSettingsScope {
     Global,
@@ -126,6 +129,7 @@ private enum class PauseMenuTab(val labelRes: Int, val icon: ImageVector) {
     Session(R.string.emulation_tab_session, Icons.Default.Pause),
     Controls(R.string.emulation_tab_controls, Icons.Default.TouchApp),
     Controller(R.string.emulation_tab_controller, Icons.Default.SportsEsports),
+    Cheats(R.string.emulation_tab_cheats, Icons.Default.Settings),
     Settings(R.string.emulation_tab_settings, Icons.Default.Settings)
 }
 
@@ -157,6 +161,23 @@ private fun EmulationPauseMenu(
     LaunchedEffect(uiState.titleId) {
         if (uiState.titleId.isNotBlank()) {
             settingsViewModel.load(uiState.titleId)
+        }
+    }
+
+    LaunchedEffect(uiState.titleId) {
+        val titleId = uiState.titleId
+        if (titleId.isBlank()) return@LaunchedEffect
+        repeat(60) {
+            val snapshot = runCatching { NativeLib.getCheatSnapshot() }.getOrNull()
+            if (snapshot != null && snapshot.titleId.equals(titleId, ignoreCase = true)) {
+                val enabled = snapshot.cheats.count { it.enabled && !it.broken }
+                val broken = snapshot.cheats.count { it.broken }
+                val masterNote = if (snapshot.masterEnabled) "" else " — global cheat switch is off"
+                val message = "Cheats: ${snapshot.cheats.size} loaded, $enabled enabled, $broken unsupported$masterNote"
+                Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                return@LaunchedEffect
+            }
+            delay(500)
         }
     }
 
@@ -470,6 +491,19 @@ private fun PauseDrawer(
                         globalSettingsViewModel = globalSettingsViewModel,
                         connectedGamepads = connectedGamepads,
                         onShowHelp = onShowHelp
+                    )
+                }
+            }
+
+
+            if (PauseMenuTab.Cheats in visitedTabs) {
+                RetainedPauseTabContent(
+                    visible = selectedTab == PauseMenuTab.Cheats
+                ) {
+                    EmulationCheatsTab(
+                        activity = activity,
+                        titleId = uiState.titleId,
+                        onStatus = { sessionViewModel.showStatusMessage(it) }
                     )
                 }
             }

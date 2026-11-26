@@ -2,6 +2,7 @@ package org.vita3k.emulator;
 
 import android.content.Context;
 import android.content.Intent;
+import android.net.Uri;
 import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
 import android.content.res.AssetFileDescriptor;
@@ -80,8 +81,12 @@ public class Emulator extends SDLActivity
     static final int FOLDER_DIALOG_CODE = 546;
     static final int FOLDER_ACCESS_SETTINGS_CODE = 547;
     static final int FOLDER_ACCESS_PERMISSION_CODE = 548;
+    static final int CHEAT_FILE_DIALOG_CODE = 549;
     public interface ImagePathResultCallback {
         void onResult(String path);
+    }
+    public interface CheatFileResultCallback {
+        void onResult(Uri uri);
     }
     private final LifecycleRegistry lifecycleRegistry = new LifecycleRegistry(this);
     private final SavedStateRegistryController savedStateRegistryController =
@@ -106,6 +111,7 @@ public class Emulator extends SDLActivity
     private int lastTextInputType;
     private boolean hasLastTextInputState;
     private ImagePathResultCallback pendingImagePathCallback;
+    private CheatFileResultCallback pendingCheatFileCallback;
     private RelativeLayout portraitSplitRoot;
     private final View.OnLayoutChangeListener portraitSplitLayoutListener =
             (view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) ->
@@ -1018,6 +1024,15 @@ public class Emulator extends SDLActivity
         super.onActivityResult(requestCode, resultCode, data);
 
         switch (requestCode) {
+            case CHEAT_FILE_DIALOG_CODE: {
+                CheatFileResultCallback callback = pendingCheatFileCallback;
+                pendingCheatFileCallback = null;
+                Uri selectedUri = resultCode == RESULT_OK && data != null ? data.getData() : null;
+                if (callback != null) {
+                    callback.onResult(selectedUri);
+                }
+                break;
+            }
             case FOLDER_ACCESS_SETTINGS_CODE:
                 if (StorageAccess.hasStorageAccess(this)) {
                     if (pendingImagePathCallback != null) {
@@ -1081,6 +1096,22 @@ public class Emulator extends SDLActivity
                 dispatchPendingImagePath(null);
             } else {
                 filedialogReturn("");
+            }
+        }
+    }
+
+    public void launchCheatFilePicker(CheatFileResultCallback callback) {
+        pendingCheatFileCallback = callback;
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        try {
+            startActivityForResult(intent, CHEAT_FILE_DIALOG_CODE);
+        } catch (RuntimeException error) {
+            pendingCheatFileCallback = null;
+            Log.e(TAG, "Unable to open the cheat file picker", error);
+            if (callback != null) {
+                callback.onResult(null);
             }
         }
     }

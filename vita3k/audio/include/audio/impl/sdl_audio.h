@@ -48,6 +48,7 @@ struct SDLAudioOutPort : public AudioOutPort {
     int channels = 2;
     AudioStreamPtr stream;
     SDLAudioAdapter &adapter;
+    std::atomic<bool> first_output_logged{ false };
     std::mutex mutex;
     std::condition_variable cond_var;
     SDLAudioOutPort(AudioStreamPtr stream, AudioAdapter &adapter)

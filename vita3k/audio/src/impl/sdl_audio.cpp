@@ -62,6 +62,9 @@ bool SDLAudioAdapter::init() {
     SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "512");
     device_id = SDL_OpenAudioDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, nullptr);
     SDL_CHECK_EXT(device_id > 0, false);
+    const char *device_name = SDL_GetAudioDeviceName(device_id);
+    LOG_INFO("SDL audio: opened playback device '{}' (id {})",
+        device_name ? device_name : "unknown", device_id);
     return true;
 }
 
@@ -79,6 +82,8 @@ AudioOutPortPtr SDLAudioAdapter::open_port(int nb_channels, int freq, int nb_sam
         .freq = freq
     };
     SDL_CHECK(SDL_GetAudioDeviceFormat(device_id, &dst_spec, &device_buffer_samples));
+    LOG_DEBUG("SDL audio: requested {} Hz / {} channels; device is {} Hz / {} channels ({} samples)",
+        freq, nb_channels, dst_spec.freq, dst_spec.channels, device_buffer_samples);
     const AudioStreamPtr stream(SDL_CreateAudioStream(&src_spec, &dst_spec), SDL_DestroyAudioStream);
     SDL_CHECK(stream);
     SDL_CHECK(SDL_BindAudioStream(device_id, stream.get()));
@@ -88,6 +93,7 @@ AudioOutPortPtr SDLAudioAdapter::open_port(int nb_channels, int freq, int nb_sam
     port->len_microseconds = (nb_sample * 1'000'000ULL) / freq;
     port->len_bytes = nb_sample * nb_channels * sizeof(int16_t);
     switch_state(false);
+    LOG_DEBUG("SDL audio: requested playback resume for a {} Hz output port", freq);
     return port;
 }
 
@@ -107,6 +113,11 @@ void SDLAudioAdapter::audio_output(AudioOutPort &out_port, const void *buffer) {
             return;
     }
     SDL_CHECK_VOID(SDL_PutAudioStreamData(port.stream.get(), buffer, out_port.len_bytes));
+    if (!port.first_output_logged.exchange(true)) {
+        const int queued_bytes = SDL_GetAudioStreamAvailable(port.stream.get());
+        LOG_INFO("SDL audio: first output buffer submitted ({} bytes; {} bytes queued)",
+            out_port.len_bytes, queued_bytes);
+    }
 }
 
 void SDLAudioAdapter::set_volume(AudioOutPort &out_port, float volume) {

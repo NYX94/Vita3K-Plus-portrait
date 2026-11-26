@@ -446,13 +446,13 @@ static ExitCode load_app_impl(SceUID &main_module_id, EmuEnvState &emuenv, const
         return KernelInitFailed;
     }
 
+    logging::set_level(static_cast<spdlog::level::level_enum>(emuenv.cfg.log_level));
     if (emuenv.cfg.archive_log) {
         const fs::path log_directory{ emuenv.log_path / "logs" };
         fs::create_directory(log_directory);
         const auto log_path{ log_directory / fs_utils::utf8_to_path(emuenv.io.title_id + " - [" + string_utils::remove_special_chars(emuenv.current_app_title) + "].log") };
         if (logging::add_sink(log_path) != Success)
             return InitConfigFailed;
-        logging::set_level(static_cast<spdlog::level::level_enum>(emuenv.cfg.log_level));
     }
 
     LOG_INFO("CPU Optimisation state: {}", emuenv.cfg.current_config.cpu_opt);
