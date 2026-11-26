@@ -12,11 +12,15 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.vita3k.emulator.NativeLib
 import org.vita3k.emulator.R
 import org.vita3k.emulator.data.FirmwareInstallState
 import org.vita3k.emulator.data.AppInfo
+import org.vita3k.emulator.data.AppStorage
 import org.vita3k.emulator.data.AppRepository
 import org.vita3k.emulator.data.SortOption
 import org.vita3k.emulator.data.UpdateCheckResult
@@ -41,6 +45,8 @@ class AppsListViewModel(application: Application) : AndroidViewModel(application
     private var compatSyncStarted = false
     private var compatSyncInProgress = false
     private var startupUpdateCheckStarted = false
+    private var filterSortJob: Job? = null
+    private var filterSortRequestId = 0L
 
     var initialized by mutableStateOf(false)
         private set
@@ -59,7 +65,7 @@ class AppsListViewModel(application: Application) : AndroidViewModel(application
         private set
     var sortOption by mutableStateOf(SortOption.TITLE)
         private set
-    var viewMode by mutableStateOf(ViewMode.LIST)
+    var viewMode by mutableStateOf(AppStorage.appsViewMode(application))
         private set
     var appVersion by mutableStateOf("")
         private set
@@ -128,6 +134,7 @@ class AppsListViewModel(application: Application) : AndroidViewModel(application
 
     fun toggleViewMode() {
         viewMode = if (viewMode == ViewMode.LIST) ViewMode.GRID else ViewMode.LIST
+        AppStorage.setAppsViewMode(getApplication<Application>(), viewMode)
     }
 
     fun dismissActionResult() {
@@ -322,23 +329,38 @@ class AppsListViewModel(application: Application) : AndroidViewModel(application
     }
 
     private fun applyFilterAndSort() {
-        val filtered = if (searchQuery.isBlank()) {
-            _allApps
-        } else {
-            _allApps.filter {
-                it.title.contains(searchQuery, ignoreCase = true) ||
-                    it.titleId.contains(searchQuery, ignoreCase = true)
+        // Capture an immutable snapshot on the main thread, then do the
+        // potentially expensive filtering and sorting on a background dispatcher.
+        val source = _allApps.toList()
+        val query = searchQuery
+        val requestedSort = sortOption
+        val requestId = ++filterSortRequestId
+
+        filterSortJob?.cancel()
+        filterSortJob = viewModelScope.launch {
+            val sorted = withContext(Dispatchers.Default) {
+                val filtered = if (query.isBlank()) {
+                    source
+                } else {
+                    source.filter {
+                        it.title.contains(query, ignoreCase = true) ||
+                            it.titleId.contains(query, ignoreCase = true)
+                    }
+                }
+
+                when (requestedSort) {
+                    SortOption.TITLE -> filtered.sortedBy { it.title.lowercase() }
+                    SortOption.LAST_PLAYED -> filtered.sortedByDescending { it.lastPlayed }
+                    SortOption.COMPATIBILITY -> filtered.sortedByDescending { it.compatibility.value }
+                }
             }
-        }
 
-        val sorted = when (sortOption) {
-            SortOption.TITLE -> filtered.sortedBy { it.title.lowercase() }
-            SortOption.LAST_PLAYED -> filtered.sortedByDescending { it.lastPlayed }
-            SortOption.COMPATIBILITY -> filtered.sortedByDescending { it.compatibility.value }
-        }
+            // Ignore an older result if the user has typed or changed sort again.
+            if (requestId != filterSortRequestId) return@launch
 
-        apps.clear()
-        apps.addAll(sorted)
+            apps.clear()
+            apps.addAll(sorted)
+        }
     }
 
 }

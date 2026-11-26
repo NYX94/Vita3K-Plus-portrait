@@ -1,10 +1,26 @@
-# Vita3K+
+# Vita3K+ portrait
 
-A fork of Vita3K with additional game compatibility and rendering fixes. All credit for the emulator itself belongs to the Vita3K team.
+An Android-focused portrait edition of Vita3K+, based on the open-source Vita3K emulator. It retains the original Vita3K+ game compatibility and rendering enhancements while adding a portrait-oriented Android interface and usability improvements.
+
+This is an independent community fork. Credit for the original emulator and Vita3K+ enhancements belongs to their respective projects and contributors.
 
 ## Download
 
-https://github.com/nckstwrt/Vita3K-Plus/releases
+Development APKs are built from this repository. Published releases will be listed on the [Vita3K+ portrait Releases page](https://github.com/NYX94/Vita3K-Plus-portrait/releases).
+
+## Android portrait edition
+
+- **Portrait split layout:** arrange the Vita display and on-screen controls for portrait gameplay.
+- **Display adjustment:** configure portrait display scale and vertical position.
+- **Orientation-aware system UI:** show the Android status bar in portrait mode and use immersive presentation in landscape.
+- **Persistent game-list layout:** List and Grid preferences survive app restarts.
+- **Responsive game library:** filtering and sorting are moved away from the UI thread.
+- **In-game pause menu:** Android Back is designed to open the pause menu and pause the running game; Back from the menu closes it and resumes gameplay.
+- **Controller overlay improvements:** configurable touch controls, layout editing, and saved overlay settings.
+- **Game lifecycle improvements:** more reliable shutdown, relaunch, and switching between games.
+- **Native cheat support:** native cheat database parsing, loading, and runtime integration. A dedicated cheat-management screen is not yet included.
+- **Build identification:** scripted APKs receive unique build numbers shown on the main screen and included in their filenames.
+- **Optimized Android build:** the `relperf` variant uses native Release optimization and Android code/resource shrinking.
 
 ## Android notes
 
@@ -18,6 +34,20 @@ https://github.com/nckstwrt/Vita3K-Plus/releases
 > **Freezing or hangs:** Enable **Accurate Thread Scheduling** in Graphics settings (which is the new default).  
 > This is needed for games such as *Dead or Alive 5 Plus*, *Sonic*, *Samurai Warriors 3*, etc.
 > Sonic might require you set Guest Cores to 1 to start up
+
+## Build an Android APK
+
+In GitHub Codespaces, run the following command from the repository root:
+
+```bash
+./scripts/build-android-relperf.sh
+```
+
+The script builds the optimized Android `relperf` variant, automatically assigns the next available portrait build number, and saves the APK in the repository root.
+
+The build number is displayed on the app's main screen and included in the APK filename.
+
+Example filename: `Vita3K-Plus-portrait-build-001-relperf.apk`
 
 ## Enhancements
 
@@ -156,93 +186,13 @@ See the **[Screenshots page](./Screenshots.md)** for the games above running in 
 
 ## Report Issues and Problems
 
-https://github.com/nckstwrt/Vita3K-Plus/issues
+https://github.com/NYX94/Vita3K-Plus-portrait/issues
 
 ## Code Changes
-Check the all-enhancements branch for the all code changes
+The Android portrait edition is maintained in this repository. The original Vita3K+ compatibility work is credited to the upstream Vita3K+ project.
 
-Below is the original Vita3k's README:
----
+## Credits and license
 
-# Vita3K
+Vita3K+ portrait builds on the original [Vita3K emulator](https://github.com/Vita3K/Vita3K) and [Vita3K+ project](https://github.com/nckstwrt/Vita3K-Plus).
 
-[![C/C++ CI](https://github.com/Vita3K/Vita3K/actions/workflows/c-cpp.yml/badge.svg)](https://github.com/Vita3K/Vita3K/actions/workflows/c-cpp.yml)
-[![Release](https://img.shields.io/github/v/release/Vita3K/Vita3K-builds?include_prereleases)](https://github.com/Vita3K/Vita3K/releases)
-[![Vita3K discord server](https://img.shields.io/discord/408916678911459329?color=5865F2&label=Vita3K%20&logo=discord&logoColor=white)](https://discord.gg/6aGwQzh)
-
-## Introduction
-
-Vita3K is an experimental PlayStation Vita emulator for Windows, Linux, macOS and Android.
-
-* [Website](https://vita3k.org/) (information for users)
-* [Wiki](https://github.com/Vita3K/Vita3K/wiki) (information for developers)
-* [Discord server](https://discord.gg/MaWhJVH) (recommended)
-
-## Compatibility
-
-The emulator currently runs most homebrew programs and commercial games.
-
-- [Homebrew compatibility page](https://vita3k.org/compatibility-homebrew.html)
-- [Commercial compatibility page](https://vita3k.org/compatibility.html)
-
-## Gallery
-
-|               **Persona 4 Golden** by Atlus                   |                     **A Rose in the Twilight** by Nippon Ichi Software                         |
-| :-----------------------------------------------------------: | :--------------------------------------------------------------------------------------------: |
-| ![Persona 4 Golden screenshot](./_readme/screenshots/P4G.png) | ![A Rose in the Twilight screenshot](./_readme/screenshots/A%20Rose%20in%20the%20Twilight.png) |
-
-|                  **Alone with You** by Benjamin Rivers                     |                 **VA-11 HALL-A** by Sukeban Games                    |
-| :------------------------------------------------------------------------: | :------------------------------------------------------------------: |
-| ![Alone with You screenshot](./_readme/screenshots/Alone%20With%20You.png) | ![VA-11 HALL-A screenshot](./_readme/screenshots/VA-11%20HALL-A.png) |
-
-|              **Fruit Ninja** by Halfbrick Studios                  |                **Jetpack Joyride** by Halfbrick Studios                    |
-| :----------------------------------------------------------------: | :------------------------------------------------------------------------: |
-| ![Fruit Ninja Screenshot](./_readme/screenshots/Fruit%20Ninja.png) | ![Jetpack Joyride Screenshot](./_readme/screenshots/Jetpack%20Joyride.png) |
-
-## License
-
-Vita3K is licensed under the **GPLv2** license. This is largely dictated by external dependencies, most notably Unicorn.
-
-## Downloads
-
-You can download the latest builds from [here](https://github.com/Vita3K/Vita3K/releases/tag/continuous).
-
-* Windows
-  * Requirements:
-    * [Microsoft Visual C++ 2015-2022 Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe)
-* Linux
-  * Arch based:
-    * [vita3k-bin](https://aur.archlinux.org/packages/vita3k-bin)<sup><small>AUR</small></sup>
-    * [vita3k-git](https://aur.archlinux.org/packages/vita3k-git)<sup><small>AUR</small></sup>
-  * Requirements:
-    * xdg-desktop-portal
-* Android
-    * [Adreno drivers](https://github.com/K11MCH1/AdrenoToolsDrivers/releases/)
-* Others
-  * [Download Artifact](https://github.com/Vita3K/Vita3K/actions?query=event%3Apush+is%3Asuccess+branch%3Amaster)
-  * [Old builds](https://github.com/Vita3K/Vita3K-builds/releases)
-
-## Building
-
-Please see [`building.md`](./building.md).
-
-## Running
-Check our [quickstart guide](https://vita3k.org/quickstart) to make sure your computer meets the minimum requirements to run Vita3K.  
-Don't forget to have your graphics driver up to date and to install the [Visual C++ 2015-2022 Redistributable](https://aka.ms/vs/17/release/VC_redist.x64.exe) if you are a Windows user.  
-
-## Bugs and issues
-The project is in an early stage, so please be mindful when opening new issues. Expect crashes, glitches, low compatibility and poor performance.
-
-## Thanks
-Thanks go out to people who offered advice or otherwise made this project possible, such as Davee, korruptor, Rinnegatamante, ScHlAuChi, Simon Kilroy, TheFlow, xerpi, xyz, Yifan Lu and many others.
-
-## Donations
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/vita3k)
-<br>
-Thank you to the supporters and to all those who support us on our [ko-fi](https://ko-fi.com/vita3K).
-* Among them, those who subscribed to the Nibble Tier and upper: **j0hnnybrav0, Mored4u, TacoOblivion, Undeadbob and uplush**
-
-## Note
-The purpose of this emulator is not to enable illegal activity. You can dump games from a Vita by using [NoNpDrm](https://github.com/TheOfficialFloW/NoNpDrm) or [FAGDec](https://github.com/CelesteBlue-dev/PSVita-RE-tools/tree/master/FAGDec/build). You can get homebrew programs from [VitaDB](https://www.rinnegatamante.eu/vitadb/#/).
-
-PlayStation, PlayStation Vita and PlayStation Network are all registered trademarks of Sony Interactive Entertainment Inc. This emulator is not related to or endorsed by Sony, or derived from confidential materials belonging to Sony.
+Credit for the original emulator and upstream enhancements belongs to their respective projects and contributors. See the repository license for licensing details.

@@ -64,6 +64,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.ComposeView
@@ -200,8 +201,8 @@ private fun EmulationPauseMenu(
 
         AnimatedVisibility(
             visibleState = menuVisibilityState,
-            enter = fadeIn(tween(220)),
-            exit = fadeOut(tween(180)),
+            enter = fadeIn(tween(150)),
+            exit = fadeOut(tween(120)),
             modifier = Modifier.fillMaxSize()
         ) {
             Box(
@@ -218,8 +219,8 @@ private fun EmulationPauseMenu(
 
         AnimatedVisibility(
             visibleState = menuVisibilityState,
-            enter = slideInHorizontally(initialOffsetX = { it / 8 }) + fadeIn(tween(240)),
-            exit = slideOutHorizontally(targetOffsetX = { it / 8 }) + fadeOut(tween(180)),
+            enter = slideInHorizontally(initialOffsetX = { it / 10 }) + fadeIn(tween(160)),
+            exit = slideOutHorizontally(targetOffsetX = { it / 10 }) + fadeOut(tween(120)),
             modifier = Modifier.fillMaxSize()
         ) {
             Row(
@@ -386,6 +387,9 @@ private fun PauseDrawer(
 ) {
     val uiState = sessionViewModel.uiState
     val scrollState = rememberScrollState()
+    var visitedTabs by remember {
+        mutableStateOf(setOf(PauseMenuTab.Session))
+    }
 
     LaunchedEffect(uiState.statusMessage) {
         if (!uiState.statusMessage.isNullOrBlank()) {
@@ -421,48 +425,101 @@ private fun PauseDrawer(
 
             PauseTabRow(
                 selected = selectedTab,
-                onSelected = onSelectedTabChange
+                onSelected = {
+                    visitedTabs = visitedTabs + it
+                    onSelectedTabChange(it)
+                }
             )
 
-            when (selectedTab) {
-                PauseMenuTab.Session -> SessionTab(
-                    activity = activity,
-                    sessionViewModel = sessionViewModel,
-                    settingsViewModel = settingsViewModel,
-                    onOpenSettingsTab = onOpenSettingsTab,
-                    onNeedsRestart = onNeedsRestart
-                )
-                PauseMenuTab.Controls -> ControlsTab(
-                    activity = activity,
-                    sessionViewModel = sessionViewModel,
-                    onShowHelp = onShowHelp
-                )
-                PauseMenuTab.Controller -> ControllerTab(
-                    activity = activity,
-                    sessionViewModel = sessionViewModel,
-                    globalSettingsViewModel = globalSettingsViewModel,
-                    connectedGamepads = connectedGamepads,
-                    onShowHelp = onShowHelp
-                )
-                PauseMenuTab.Settings -> EmbeddedSettingsTab(
-                    activity = activity,
-                    sessionViewModel = sessionViewModel,
-                    settingsViewModel = settingsViewModel,
-                    globalSettingsViewModel = globalSettingsViewModel,
-                    titleId = uiState.titleId,
-                    requestedScope = requestedSettingsScope,
-                    onScopeRequestConsumed = onSettingsScopeRequestConsumed,
-                    onSaved = { restartRequired ->
-                        if (restartRequired.isEmpty()) {
-                            sessionViewModel.showStatusMessage(activity.getString(R.string.emulation_settings_saved))
-                        } else {
-                            onNeedsRestart(restartRequired)
-                        }
-                    },
-                    onShowHelp = onShowHelp
-                )
+            if (PauseMenuTab.Session in visitedTabs) {
+                RetainedPauseTabContent(
+                    visible = selectedTab == PauseMenuTab.Session
+                ) {
+                    SessionTab(
+                        activity = activity,
+                        sessionViewModel = sessionViewModel,
+                        settingsViewModel = settingsViewModel,
+                        onOpenSettingsTab = {
+                            visitedTabs = visitedTabs + PauseMenuTab.Settings
+                            onOpenSettingsTab()
+                        },
+                        onNeedsRestart = onNeedsRestart
+                    )
+                }
+            }
+
+            if (PauseMenuTab.Controls in visitedTabs) {
+                RetainedPauseTabContent(
+                    visible = selectedTab == PauseMenuTab.Controls
+                ) {
+                    ControlsTab(
+                        activity = activity,
+                        sessionViewModel = sessionViewModel,
+                        onShowHelp = onShowHelp
+                    )
+                }
+            }
+
+            if (PauseMenuTab.Controller in visitedTabs) {
+                RetainedPauseTabContent(
+                    visible = selectedTab == PauseMenuTab.Controller
+                ) {
+                    ControllerTab(
+                        activity = activity,
+                        sessionViewModel = sessionViewModel,
+                        globalSettingsViewModel = globalSettingsViewModel,
+                        connectedGamepads = connectedGamepads,
+                        onShowHelp = onShowHelp
+                    )
+                }
+            }
+
+            if (PauseMenuTab.Settings in visitedTabs) {
+                RetainedPauseTabContent(
+                    visible = selectedTab == PauseMenuTab.Settings
+                ) {
+                    EmbeddedSettingsTab(
+                        activity = activity,
+                        sessionViewModel = sessionViewModel,
+                        settingsViewModel = settingsViewModel,
+                        globalSettingsViewModel = globalSettingsViewModel,
+                        titleId = uiState.titleId,
+                        requestedScope = requestedSettingsScope,
+                        onScopeRequestConsumed = onSettingsScopeRequestConsumed,
+                        onSaved = { restartRequired ->
+                            if (restartRequired.isEmpty()) {
+                                sessionViewModel.showStatusMessage(
+                                    activity.getString(R.string.emulation_settings_saved)
+                                )
+                            } else {
+                                onNeedsRestart(restartRequired)
+                            }
+                        },
+                        onShowHelp = onShowHelp
+                    )
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun RetainedPauseTabContent(
+    visible: Boolean,
+    content: @Composable () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(
+                if (visible) {
+                    Modifier
+                } else {
+                    Modifier.height(0.dp).clipToBounds()
+                }
+            )
+    ) {
+        content()
     }
 }
 

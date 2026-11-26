@@ -157,7 +157,12 @@ struct KernelState {
     // kubridge exception handlers (DABT=0, PABT=1, UNDEF=2)
     static constexpr int EXCEPTION_HANDLER_MAX = 3;
     std::atomic<Address> exception_handlers[EXCEPTION_HANDLER_MAX]{};
+    std::mutex thread_lifetime_mutex;
+    std::condition_variable thread_lifetime_cond;
     std::condition_variable thread_deleted_cond;
+    // Protected by thread_lifetime_mutex. Counts live ThreadState objects.
+    uint32_t live_thread_states = 0;
+
 
     SceUID get_next_uid() {
         return next_uid++;

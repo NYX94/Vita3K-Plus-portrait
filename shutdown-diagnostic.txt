@@ -1,0 +1,1264 @@
+
+============================================================================
+GIT STATUS
+============================================================================
+MM vita3k/CMakeLists.txt
+M  vita3k/android/jni/native_bootstrap.cpp
+M  vita3k/app/CMakeLists.txt
+M  vita3k/app/src/app_init.cpp
+A  vita3k/cheat/CMakeLists.txt
+A  vita3k/cheat/include/cheat/cheat.h
+A  vita3k/cheat/include/cheat/functions.h
+A  vita3k/cheat/include/cheat/search.h
+A  vita3k/cheat/include/cheat/state.h
+A  vita3k/cheat/src/cheat.cpp
+A  vita3k/cheat/src/parser.cpp
+A  vita3k/cheat/src/search.cpp
+A  vita3k/cheat/tests/cheat_tests.cpp
+M  vita3k/config/include/config/config.h
+M  vita3k/ctrl/include/ctrl/functions.h
+ M vita3k/ctrl/src/ctrl.cpp
+ M vita3k/display/CMakeLists.txt
+MM vita3k/display/src/display.cpp
+M  vita3k/emuenv/CMakeLists.txt
+M  vita3k/emuenv/include/emuenv/state.h
+M  vita3k/emuenv/src/emuenv.cpp
+M  vita3k/gui-qt/CMakeLists.txt
+M  vita3k/gui-qt/include/gui-qt/apps_list_context_menu.h
+A  vita3k/gui-qt/include/gui-qt/cheats_dialog.h
+M  vita3k/gui-qt/include/gui-qt/gui_settings.h
+M  vita3k/gui-qt/include/gui-qt/main_window.h
+M  vita3k/gui-qt/src/apps_list_context_menu.cpp
+A  vita3k/gui-qt/src/cheats_dialog.cpp
+M  vita3k/gui-qt/src/main_window.cpp
+M  vita3k/gui-qt/src/main_window.ui
+M  vita3k/interface.cpp
+ M vita3k/kernel/include/kernel/state.h
+ M vita3k/kernel/include/kernel/thread/thread_state.h
+ M vita3k/kernel/src/kernel.cpp
+ M vita3k/kernel/src/thread.cpp
+M  vita3k/modules/CMakeLists.txt
+M  vita3k/util/include/util/fs.h
+
+
+============================================================================
+CHANGES IN THREAD AND KERNEL FILES
+============================================================================
+diff --git a/vita3k/kernel/include/kernel/state.h b/vita3k/kernel/include/kernel/state.h
+index de27351eb..203958c86 100644
+--- a/vita3k/kernel/include/kernel/state.h
++++ b/vita3k/kernel/include/kernel/state.h
+@@ -157,7 +157,12 @@ struct KernelState {
+     // kubridge exception handlers (DABT=0, PABT=1, UNDEF=2)
+     static constexpr int EXCEPTION_HANDLER_MAX = 3;
+     std::atomic<Address> exception_handlers[EXCEPTION_HANDLER_MAX]{};
++    std::mutex thread_lifetime_mutex;
+     std::condition_variable thread_deleted_cond;
++    // Protected by thread_lifetime_mutex. Counts ThreadState objects until
++    // all their members, including MemState-backed allocations, are destroyed.
++    uint32_t live_thread_states = 0;
++
+
+     SceUID get_next_uid() {
+         return next_uid++;
+diff --git a/vita3k/kernel/include/kernel/thread/thread_state.h b/vita3k/kernel/include/kernel/thread/thread_state.h
+index ebd51b156..eb603a641 100644
+--- a/vita3k/kernel/include/kernel/thread/thread_state.h
++++ b/vita3k/kernel/include/kernel/thread/thread_state.h
+@@ -59,6 +59,12 @@ private:
+ };
+
+ struct ThreadState {
++    struct Lifetime {
++        explicit Lifetime(KernelState &kernel);
++        ~Lifetime();
++
++        KernelState &kernel;
++    } lifetime;
+     std::mutex mutex;
+     std::string name;
+     SceUID id;
+diff --git a/vita3k/kernel/src/kernel.cpp b/vita3k/kernel/src/kernel.cpp
+index d36f8c376..5e7e60005 100644
+--- a/vita3k/kernel/src/kernel.cpp
++++ b/vita3k/kernel/src/kernel.cpp
+@@ -194,8 +194,10 @@ void KernelState::process_exit() {
+             thread->exit_delete(false);
+     }
+
+-    std::unique_lock<std::mutex> lock(mutex);
+-    thread_deleted_cond.wait(lock, [this] { return threads.empty(); });
++    std::unique_lock<std::mutex> lock(thread_lifetime_mutex);
++    thread_deleted_cond.wait(lock, [this] {
++        return live_thread_states == 0;
++    });
+ }
+
+ void KernelState::pause_threads() {
+diff --git a/vita3k/kernel/src/thread.cpp b/vita3k/kernel/src/thread.cpp
+index cad36c039..d583291a3 100644
+--- a/vita3k/kernel/src/thread.cpp
++++ b/vita3k/kernel/src/thread.cpp
+@@ -400,8 +400,25 @@ uint32_t ThreadState::run_guest_function(Address callback_address, SceSize args,
+     return returned_value;
+ }
+
++ThreadState::Lifetime::Lifetime(KernelState &kernel)
++    : kernel(kernel) {
++    const std::lock_guard<std::mutex> lock(kernel.thread_lifetime_mutex);
++    ++kernel.live_thread_states;
++}
++
++ThreadState::Lifetime::~Lifetime() {
++    {
++        const std::lock_guard<std::mutex> lock(kernel.thread_lifetime_mutex);
++        assert(kernel.live_thread_states > 0);
++        --kernel.live_thread_states;
++    }
++
++    kernel.thread_deleted_cond.notify_all();
++}
++
+ ThreadState::ThreadState(SceUID id, KernelState &kernel, MemState &mem)
+-    : id(id)
++    : lifetime(kernel)
++    , id(id)
+     , kernel(kernel)
+     , mem(mem) {
+ }
+
+
+============================================================================
+vita3k/kernel/src/kernel.cpp
+============================================================================
+
+--- Lines 1-90 ---
+   1: // Vita3K emulator project
+   2: // Copyright (C) 2026 Vita3K team
+   3: //
+   4: // This program is free software; you can redistribute it and/or modify
+   5: // it under the terms of the GNU General Public License as published by
+   6: // the Free Software Foundation; either version 2 of the License, or
+   7: // (at your option) any later version.
+   8: //
+   9: // This program is distributed in the hope that it will be useful,
+  10: // but WITHOUT ANY WARRANTY; without even the implied warranty of
+  11: // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  12: // GNU General Public License for more details.
+  13: //
+  14: // You should have received a copy of the GNU General Public License along
+  15: // with this program; if not, write to the Free Software Foundation, Inc.,
+  16: // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+  17:
+  18: #ifdef TRACY_ENABLE
+  19: #include <tracy/Tracy.hpp>
+  20: #endif
+  21:
+  22: #include <cpu/common.h>
+  23: #include <kernel/state.h>
+  24: #include <mem/functions.h>
+  25:
+  26: #include <kernel/thread/thread_state.h>
+  27:
+  28: #include <cpu/functions.h>
+  29: #include <mem/ptr.h>
+  30: #include <util/lock_and_find.h>
+  31: #include <util/log.h>
+  32:
+  33: #include <SDL3/SDL_mutex.h>
+  34: #include <SDL3/SDL_thread.h>
+  35:
+  36: int CorenumAllocator::new_corenum() {
+  37:     const std::lock_guard<std::mutex> guard(lock);
+  38:
+  39:     uint32_t size = 1;
+  40:     return alloc.allocate_from(0, size);
+  41: }
+  42:
+  43: void CorenumAllocator::free_corenum(const int num) {
+  44:     const std::lock_guard<std::mutex> guard(lock);
+  45:     alloc.free(num, 1);
+  46: }
+  47:
+  48: void CorenumAllocator::set_max_core_count(const std::size_t max) {
+  49:     const std::lock_guard<std::mutex> guard(lock);
+  50:     alloc.set_maximum(max);
+  51: }
+  52:
+  53: // TODO implement cross platform debug thread name setter and eliminate SDL thread
+  54: struct ThreadParams {
+  55:     KernelState *kernel = nullptr;
+  56:     SceUID thid = SCE_KERNEL_ERROR_ILLEGAL_THREAD_ID;
+  57:     SDL_Semaphore *host_may_destroy_params = nullptr;
+  58: };
+  59:
+  60: static int SDLCALL thread_function(void *data) {
+  61:     assert(data != nullptr);
+  62:     const ThreadParams params = *static_cast<const ThreadParams *>(data);
+  63:     SDL_SignalSemaphore(params.host_may_destroy_params);
+  64:     const ThreadStatePtr thread = params.kernel->get_thread(params.thid);
+  65: #ifdef TRACY_ENABLE
+  66:     if (!thread->name.empty()) {
+  67:         tracy::SetThreadName(thread->name.c_str());
+  68:     } else {
+  69:         std::string th_name = "TID:" + std::to_string(thread->id);
+  70:         tracy::SetThreadName(th_name.c_str());
+  71:     }
+  72: #endif
+  73:
+  74:     thread->run_loop();
+  75:     const uint32_t r0 = read_reg(*thread->cpu, 0);
+  76:
+  77:     {
+  78:         std::lock_guard<std::mutex> lock(params.kernel->mutex);
+  79:         params.kernel->threads.erase(thread->id);
+  80:         params.kernel->corenum_allocator.free_corenum(get_processor_id(*thread->cpu));
+  81:         params.kernel->thread_deleted_cond.notify_all();
+  82:     }
+  83:
+  84:     return r0;
+  85: }
+  86:
+  87: KernelState::KernelState()
+  88:     : debugger(*this) {
+  89: }
+  90:
+
+--- Lines 140-255 ---
+ 140:
+ 141: ThreadStatePtr KernelState::get_thread(SceUID thread_id) {
+ 142:     return lock_and_find(thread_id, threads, mutex);
+ 143: }
+ 144:
+ 145: ThreadStatePtr KernelState::create_thread(MemState &mem, const char *name, Ptr<const void> entry_point) {
+ 146:     return create_thread(mem, name, entry_point, SCE_KERNEL_DEFAULT_PRIORITY, SCE_KERNEL_THREAD_CPU_AFFINITY_MASK_DEFAULT, SCE_KERNEL_STACK_SIZE_USER_MAIN, nullptr);
+ 147: }
+ 148:
+ 149: ThreadStatePtr KernelState::create_thread(MemState &mem, const char *name, Ptr<const void> entry_point, int init_priority, SceInt32 affinity_mask, int stack_size, const SceKernelThreadOptParam *option) {
+ 150:     ThreadStatePtr thread = std::make_shared<ThreadState>(get_next_uid(), *this, mem);
+ 151:     if (thread->init(name, entry_point, init_priority, affinity_mask, stack_size, option) < 0)
+ 152:         return nullptr;
+ 153:
+ 154:     {
+ 155:         const std::lock_guard<std::mutex> lock(mutex);
+ 156:         threads.emplace(thread->id, thread);
+ 157:     }
+ 158:
+ 159:     ThreadParams params;
+ 160:     params.kernel = this;
+ 161:     params.thid = thread->id;
+ 162:
+ 163:     params.host_may_destroy_params = SDL_CreateSemaphore(0);
+ 164:     SDL_DetachThread(SDL_CreateThread(&thread_function, thread->name.c_str(), &params));
+ 165:     SDL_WaitSemaphore(params.host_may_destroy_params);
+ 166:     SDL_DestroySemaphore(params.host_may_destroy_params);
+ 167:
+ 168:     return thread;
+ 169: }
+ 170:
+ 171: Ptr<Ptr<void>> KernelState::get_thread_tls_addr(MemState &mem, SceUID thread_id, int key) {
+ 172:     Ptr<Ptr<void>> address(0);
+ 173:     // magic numbers taken from decompiled source. There is 0x400 unused bytes of unknown usage
+ 174:     if (key <= 0x100 && key >= 0) {
+ 175:         const ThreadStatePtr thread = get_thread(thread_id);
+ 176:         address = thread->tls.get_ptr<Ptr<void>>() + key;
+ 177:     } else {
+ 178:         LOG_ERROR("Wrong tls slot index. TID:{} index:{}", thread_id, key);
+ 179:     }
+ 180:     return address;
+ 181: }
+ 182:
+ 183: void KernelState::request_process_exit(int res, std::optional<AppLaunchRequest> relaunch) {
+ 184:     if (process_exit_callback)
+ 185:         process_exit_callback(res, std::move(relaunch));
+ 186: }
+ 187:
+ 188: void KernelState::process_exit() {
+ 189:     {
+ 190:         std::lock_guard<std::mutex> lock(mutex);
+ 191:         for (auto &[_, timer] : timers)
+ 192:             timer->condvar.notify_all();
+ 193:         for (auto &[_, thread] : threads)
+ 194:             thread->exit_delete(false);
+ 195:     }
+ 196:
+ 197:     std::unique_lock<std::mutex> lock(thread_lifetime_mutex);
+ 198:     thread_deleted_cond.wait(lock, [this] {
+ 199:         return live_thread_states == 0;
+ 200:     });
+ 201: }
+ 202:
+ 203: void KernelState::pause_threads() {
+ 204:     const std::lock_guard<std::mutex> lock(mutex);
+ 205:     for (auto &[_, thread] : threads) {
+ 206:         paused_threads_status[thread->id] = thread->status;
+ 207:         if (thread->status == ThreadStatus::run)
+ 208:             thread->suspend();
+ 209:     }
+ 210: }
+ 211:
+ 212: void KernelState::resume_threads() {
+ 213:     const std::lock_guard<std::mutex> lock(mutex);
+ 214:     for (auto &[_, thread] : threads) {
+ 215:         if (paused_threads_status[thread->id] == ThreadStatus::run)
+ 216:             thread->resume();
+ 217:     }
+ 218:     paused_threads_status.clear();
+ 219: }
+ 220:
+ 221: void KernelState::deinit(MemState &mem) {
+ 222:     process_exit();
+ 223:     threads.clear();
+ 224:
+ 225:     simple_events.clear();
+ 226:     timers.clear();
+ 227:     semaphores.clear();
+ 228:     condvars.clear();
+ 229:     lwcondvars.clear();
+ 230:     mutexes.clear();
+ 231:     lwmutexes.clear();
+ 232:     rwlocks.clear();
+ 233:     eventflags.clear();
+ 234:     msgpipes.clear();
+ 235:     callbacks.clear();
+ 236:
+ 237:     loaded_modules.clear();
+ 238:     loaded_sysmodules.clear();
+ 239:     loaded_internal_sysmodules.clear();
+ 240:
+ 241:     {
+ 242:         std::lock_guard<std::mutex> lock(export_nids_mutex);
+ 243:         export_nids.clear();
+ 244:         func_binding_infos.clear();
+ 245:         var_binding_infos.clear();
+ 246:         module_uid_by_nid.clear();
+ 247:     }
+ 248:
+ 249:     corenum_allocator.alloc.reset();
+ 250:     corenum_allocator.alloc.set_maximum(0);
+ 251:
+ 252:     obj_store.clear();
+ 253:
+ 254:     tls_address = Ptr<const void>(0);
+ 255:     tls_psize = 0;
+
+============================================================================
+vita3k/kernel/src/thread.cpp
+============================================================================
+
+--- Lines 130-260 ---
+ 130: }
+ 131:
+ 132: int ThreadState::start(SceSize arglen, const Ptr<void> argp, bool run_entry_callback) {
+ 133:     std::unique_lock<std::mutex> thread_lock(mutex);
+ 134:     if (status != ThreadStatus::dormant)
+ 135:         return SCE_KERNEL_ERROR_RUNNING;
+ 136:
+ 137:     run_start_callback = run_entry_callback;
+ 138:     load_context(*cpu, init_cpu_ctx);
+ 139:     write_pc(*cpu, entry_point);
+ 140:     write_lr(*cpu, kernel.halt_instruction_pc);
+ 141:     write_reg(*cpu, 0, arglen);
+ 142:
+ 143:     // Copy data to stack
+ 144:     if (argp && arglen > 0) {
+ 145:         const Address data_addr = stack_alloc(*cpu, align(arglen, 8));
+ 146:         memcpy(Ptr<uint8_t>(data_addr).get(mem), argp.get(mem), arglen);
+ 147:         write_reg(*cpu, 1, data_addr);
+ 148:     } else {
+ 149:         write_reg(*cpu, 1, 0);
+ 150:     }
+ 151:
+ 152:     if (kernel.debugger.wait_for_debugger) {
+ 153:         kernel.debugger.wait_for_debugger = false;
+ 154:         status = ThreadStatus::suspend;
+ 155:     } else {
+ 156:         status = ThreadStatus::run;
+ 157:     }
+ 158:     status_cond.notify_one();
+ 159:
+ 160:     return SCE_KERNEL_OK;
+ 161: }
+ 162:
+ 163: void ThreadState::exit(SceInt32 status) {
+ 164:     std::lock_guard<std::mutex> guard(mutex);
+ 165:     run_end_callback = true;
+ 166:     exit_requested = true;
+ 167:     returned_value = static_cast<uint32_t>(status);
+ 168: }
+ 169:
+ 170: void ThreadState::exit_delete(bool exit) {
+ 171:     std::lock_guard<std::mutex> lock(mutex);
+ 172:
+ 173:     run_end_callback = exit;
+ 174:     delete_requested = true;
+ 175:
+ 176:     if (status == ThreadStatus::run) {
+ 177:         stop(*cpu);
+ 178:     } else if (status == ThreadStatus::wait) {
+ 179:         // wake threads blocked in a sync primitive so they can observe delete_requested
+ 180:         update_status(ThreadStatus::run);
+ 181:     } else {
+ 182:         // dormant or suspend: wake run_loop() so it can observe delete_requested
+ 183:         status_cond.notify_all();
+ 184:     }
+ 185:
+ 186:     // Wake if thread waiting on sceKernelWaitSignal
+ 187:     signal.send();
+ 188: }
+ 189:
+ 190: void ThreadState::run_loop() {
+ 191:     bool guest_returned = false;
+ 192:
+ 193:     // Set thread-local CPU state so signal handlers can access it.
+ 194:     // The guard clears it on any exit so a recycled host thread never sees
+ 195:     // a stale CPUState pointer.
+ 196:     set_current_cpu_state(cpu.get());
+ 197:     struct CpuStateGuard {
+ 198:         ~CpuStateGuard() { set_current_cpu_state(nullptr); }
+ 199:     } cpu_state_guard;
+ 200:
+ 201:     std::unique_lock<std::mutex> lock(mutex);
+ 202:     ++call_level;
+ 203:     const bool top_level = call_level == 1;
+ 204:
+ 205:     auto run_thread_end_callback = [&]() {
+ 206:         if (!run_end_callback)
+ 207:             return;
+ 208:         run_end_callback = false;
+ 209:
+ 210:         if (!kernel.thread_event_end)
+ 211:             return;
+ 212:
+ 213:         const ThreadStatus old_status = status;
+ 214:         const uint32_t old_returned_value = returned_value;
+ 215:         status = ThreadStatus::run;
+ 216:
+ 217:         lock.unlock();
+ 218:         const int ret = run_callback(kernel.thread_event_end.address(), { SCE_KERNEL_THREAD_EVENT_TYPE_END, static_cast<uint32_t>(id), 0, kernel.thread_event_end_arg });
+ 219:         if (ret != 0)
+ 220:             LOG_WARN("Thread end event handler returned {}", log_hex(ret));
+ 221:         lock.lock();
+ 222:
+ 223:         status = old_status;
+ 224:         returned_value = old_returned_value;
+ 225:     };
+ 226:
+ 227:     while (true) {
+ 228:         // Check if this call-level is done (normal exit, guest return, or delete).
+ 229:         if (exit_requested || guest_returned || delete_requested) {
+ 230:             // Top-level fires the end callback and parks dormant
+ 231:             if (top_level && status != ThreadStatus::dormant) {
+ 232:                 run_thread_end_callback();
+ 233:                 update_status(ThreadStatus::dormant);
+ 234:             }
+ 235:             // Return from nested levels to the top level (or completely if deleted)
+ 236:             if (!top_level || delete_requested)
+ 237:                 break;
+ 238:             exit_requested = false;
+ 239:             guest_returned = false;
+ 240:             // Status is now dormant: we'll park until the next start() or exit_delete().
+ 241:         }
+ 242:
+ 243:         // Park until we have something to do.
+ 244:         if (status != ThreadStatus::run) {
+ 245:             status_cond.wait(lock, [&] {
+ 246:                 return status == ThreadStatus::run || delete_requested;
+ 247:             });
+ 248:             continue;
+ 249:         }
+ 250:
+ 251:         // Fire the thread-start event once per start.
+ 252:         if (run_start_callback) {
+ 253:             run_start_callback = false;
+ 254:             lock.unlock();
+ 255:             if (kernel.thread_event_start) {
+ 256:                 const int ret = run_callback(kernel.thread_event_start.address(), { SCE_KERNEL_THREAD_EVENT_TYPE_START, static_cast<uint32_t>(id), 0, kernel.thread_event_start_arg });
+ 257:                 if (ret != 0)
+ 258:                     LOG_WARN("Thread start event handler returned {}", log_hex(ret));
+ 259:             }
+ 260:             lock.lock();
+
+--- Lines 390-460 ---
+ 390:     const auto old_entry_point = entry_point;
+ 391:     entry_point = callback_address;
+ 392:
+ 393:     start(args, argp);
+ 394:     {
+ 395:         std::unique_lock<std::mutex> lock(mutex);
+ 396:         status_cond.wait(lock, [&]() { return status == ThreadStatus::dormant; });
+ 397:     }
+ 398:
+ 399:     entry_point = old_entry_point;
+ 400:     return returned_value;
+ 401: }
+ 402:
+ 403: ThreadState::Lifetime::Lifetime(KernelState &kernel)
+ 404:     : kernel(kernel) {
+ 405:     const std::lock_guard<std::mutex> lock(kernel.thread_lifetime_mutex);
+ 406:     ++kernel.live_thread_states;
+ 407: }
+ 408:
+ 409: ThreadState::Lifetime::~Lifetime() {
+ 410:     {
+ 411:         const std::lock_guard<std::mutex> lock(kernel.thread_lifetime_mutex);
+ 412:         assert(kernel.live_thread_states > 0);
+ 413:         --kernel.live_thread_states;
+ 414:     }
+ 415:
+ 416:     kernel.thread_deleted_cond.notify_all();
+ 417: }
+ 418:
+ 419: ThreadState::ThreadState(SceUID id, KernelState &kernel, MemState &mem)
+ 420:     : lifetime(kernel)
+ 421:     , id(id)
+ 422:     , kernel(kernel)
+ 423:     , mem(mem) {
+ 424: }
+ 425:
+ 426: void ThreadState::update_status(ThreadStatus status, std::optional<ThreadStatus> expected) {
+ 427:     if (expected)
+ 428:         assert(expected.value() == this->status);
+ 429:
+ 430:     // Don't apply the requested wait transition if being removed to not block deletion
+ 431:     if (status == ThreadStatus::wait && delete_requested)
+ 432:         return;
+ 433:
+ 434:     this->status = status;
+ 435:     status_cond.notify_all();
+ 436:
+ 437:     if (status == ThreadStatus::dormant) {
+ 438:         raise_waiting_threads();
+ 439:     }
+ 440: }
+ 441:
+ 442: Address ThreadState::stack_top() const {
+ 443:     return stack.get() + stack_size;
+ 444: }
+ 445:
+ 446: void ThreadState::suspend() {
+ 447:     assert(status == ThreadStatus::run);
+ 448:     {
+ 449:         const std::lock_guard<std::mutex> lock(mutex);
+ 450:         suspend_requested = true;
+ 451:     }
+ 452:     stop(*cpu);
+ 453: }
+ 454:
+ 455: void ThreadState::resume(bool step) {
+ 456:     assert(status == ThreadStatus::suspend || status == ThreadStatus::dormant);
+ 457:     {
+ 458:         const std::lock_guard<std::mutex> lock(mutex);
+ 459:         single_stepping = step;
+ 460:         update_status(ThreadStatus::run);
+
+============================================================================
+vita3k/kernel/include/kernel/thread/thread_state.h
+============================================================================
+
+--- Lines 55-115 ---
+  55: private:
+  56:     std::mutex mutex;
+  57:     std::condition_variable recv_cond;
+  58:     bool signaled = false;
+  59: };
+  60:
+  61: struct ThreadState {
+  62:     struct Lifetime {
+  63:         explicit Lifetime(KernelState &kernel);
+  64:         ~Lifetime();
+  65:
+  66:         KernelState &kernel;
+  67:     } lifetime;
+  68:     std::mutex mutex;
+  69:     std::string name;
+  70:     SceUID id;
+  71:     Address entry_point;
+  72:
+  73:     Block stack;
+  74:     int stack_size;
+  75:     Block tls;
+  76:
+  77:     int priority;
+  78:     SceInt32 affinity_mask;
+  79:     uint64_t start_tick;
+  80:     uint64_t last_vblank_waited;
+  81:     // set to true if thread is processing kernel callbacks
+  82:     bool is_processing_callbacks = false;
+  83:
+  84:     CPUStatePtr cpu;
+  85:     ThreadStatus status = ThreadStatus::dormant;
+  86:
+  87:     ThreadSignal signal;
+  88:     std::vector<CallbackPtr> callbacks;
+  89:     std::condition_variable status_cond;
+  90:     std::vector<std::shared_ptr<ThreadState>> waiting_threads;
+  91:     uint32_t returned_value = 0;
+  92:
+  93:     ThreadState() = delete;
+  94:     explicit ThreadState(SceUID id, KernelState &kernel, MemState &mem);
+  95:
+  96:     int init(const char *name, Ptr<const void> entry_point, int init_priority, SceInt32 affinity_mask, int stack_size, const SceKernelThreadOptParam *option);
+  97:     int start(SceSize arglen, const Ptr<void> argp, bool run_entry_callback = false);
+  98:     void exit(SceInt32 status);
+  99:     void exit_delete(bool exit = true);
+ 100:
+ 101:     void update_status(ThreadStatus status, std::optional<ThreadStatus> expected = std::nullopt);
+ 102:     Address stack_top() const;
+ 103:
+ 104:     void run_loop();
+ 105:     void raise_waiting_threads();
+ 106:
+ 107:     // this function must be called from the thread itself (inside a svc call)
+ 108:     uint32_t run_callback(Address callback_address, const std::vector<uint32_t> &args);
+ 109:
+ 110:     // this function is called from another thread when this one is dormant
+ 111:     // it is only used for module loading and gxm display queue right now
+ 112:     // args and argp are passed to thread->start as is
+ 113:     uint32_t run_guest_function(Address callback_address, SceSize args = 0, const Ptr<void> argp = Ptr<void>{});
+ 114:
+ 115:     void suspend();
+
+============================================================================
+vita3k/kernel/include/kernel/state.h
+============================================================================
+
+--- Lines 1-180 ---
+   1: // Vita3K emulator project
+   2: // Copyright (C) 2026 Vita3K team
+   3: //
+   4: // This program is free software; you can redistribute it and/or modify
+   5: // it under the terms of the GNU General Public License as published by
+   6: // the Free Software Foundation; either version 2 of the License, or
+   7: // (at your option) any later version.
+   8: //
+   9: // This program is distributed in the hope that it will be useful,
+  10: // but WITHOUT ANY WARRANTY; without even the implied warranty of
+  11: // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  12: // GNU General Public License for more details.
+  13: //
+  14: // You should have received a copy of the GNU General Public License along
+  15: // with this program; if not, write to the Free Software Foundation, Inc.,
+  16: // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+  17:
+  18: #pragma once
+  19:
+  20: #include <cpu/common.h>
+  21: #include <kernel/callback.h>
+  22: #include <kernel/debugger.h>
+  23: #include <kernel/object_store.h>
+  24: #include <kernel/sync_primitives.h>
+  25: #include <kernel/types.h>
+  26: #include <mem/allocator.h>
+  27: #include <mem/block.h>
+  28: #include <mem/ptr.h>
+  29: #include <mem/util.h>
+  30: #include <rtc/rtc.h>
+  31: #include <util/containers.h>
+  32: #include <util/types.h>
+  33:
+  34: #include <emuenv/app_launch_request.h>
+  35:
+  36: #include <atomic>
+  37: #include <condition_variable>
+  38: #include <functional>
+  39: #include <map>
+  40: #include <mutex>
+  41: #include <optional>
+  42: #include <vector>
+  43:
+  44: struct ThreadState;
+  45: struct MemState;
+  46:
+  47: struct CodecEngineBlock;
+  48:
+  49: struct KernelModule {
+  50:     SceKernelModuleInfo info;
+  51:     Ptr<const uint8_t> info_segment_address;
+  52:     uint32_t info_offset;
+  53: };
+  54: typedef std::shared_ptr<KernelModule> SceKernelModulePtr;
+  55:
+  56: typedef std::shared_ptr<ThreadState> ThreadStatePtr;
+  57: typedef std::map<SceUID, CodecEngineBlock> CodecEngineBlocks;
+  58: typedef std::map<SceUID, Ptr<Ptr<void>>> SlotToAddress;
+  59: typedef std::map<SceUID, ThreadStatePtr> ThreadStatePtrs;
+  60: typedef std::map<SceUID, SceKernelModulePtr> SceKernelModuleInfoPtrs;
+  61: typedef std::map<SceUID, CallbackPtr> CallbackPtrs;
+  62: typedef unordered_map_fast<uint32_t, Address> ExportNids;
+  63:
+  64: typedef std::map<Address, uint32_t> NotFoundVars;
+  65: typedef std::function<void(CPUState &cpu, uint32_t nid, SceUID thread_id)> CallImportFunc;
+  66:
+  67: struct CodecEngineBlock {
+  68:     uint32_t size;
+  69:     int32_t vaddr;
+  70: };
+  71:
+  72: using LoadedSysmodules = std::map<SceSysmoduleModuleId, std::vector<SceUID>>;
+  73: using LoadedInternalSysmodules = std::vector<SceSysmoduleInternalModuleId>;
+  74:
+  75: struct CorenumAllocator {
+  76:     BitmapAllocator alloc;
+  77:     std::mutex lock;
+  78:
+  79:     void set_max_core_count(const std::size_t max);
+  80:
+  81:     int new_corenum();
+  82:     void free_corenum(const int num);
+  83: };
+  84:
+  85: struct VarBindingInfo {
+  86:     void *entries;
+  87:     uint32_t size;
+  88:     uint32_t module_nid;
+  89: };
+  90:
+  91: typedef std::multimap<uint32_t, VarBindingInfo> VarBindingInfos;
+  92: typedef std::multimap<uint32_t, Address> FuncBindingInfos;
+  93:
+  94: typedef std::map<uint32_t, uint32_t> ModuleUidByNid;
+  95:
+  96: struct KernelState {
+  97:     KernelState();
+  98:
+  99:     std::mutex mutex;
+ 100:     CodecEngineBlocks codec_blocks;
+ 101:
+ 102:     Ptr<const void> tls_address = Ptr<const void>(0);
+ 103:     unsigned int tls_psize = 0;
+ 104:     unsigned int tls_msize = 0;
+ 105:
+ 106:     Ptr<const void> thread_event_start = Ptr<const void>(0);
+ 107:     Address thread_event_start_arg = 0;
+ 108:     Ptr<const void> thread_event_end = Ptr<const void>(0);
+ 109:     Address thread_event_end_arg = 0;
+ 110:
+ 111:     SimpleEventPtrs simple_events;
+ 112:     TimerPtrs timers;
+ 113:     SemaphorePtrs semaphores;
+ 114:     CondvarPtrs condvars;
+ 115:     CondvarPtrs lwcondvars;
+ 116:     MutexPtrs mutexes;
+ 117:     MutexPtrs lwmutexes; // also Mutexes for now
+ 118:     RWLockPtrs rwlocks;
+ 119:     EventFlagPtrs eventflags;
+ 120:     MsgPipePtrs msgpipes;
+ 121:     CallbackPtrs callbacks;
+ 122:
+ 123:     ThreadStatePtrs threads;
+ 124:     void *jni_env;
+ 125:     void *jni_activity;
+ 126:
+ 127:     SceKernelModuleInfoPtrs loaded_modules;
+ 128:     LoadedSysmodules loaded_sysmodules;
+ 129:     LoadedInternalSysmodules loaded_internal_sysmodules;
+ 130:
+ 131:     // the variables in this block must be accessed by first locking export_nids_mutex
+ 132:     std::mutex export_nids_mutex;
+ 133:     ExportNids export_nids;
+ 134:     FuncBindingInfos func_binding_infos;
+ 135:     VarBindingInfos var_binding_infos;
+ 136:     ModuleUidByNid module_uid_by_nid;
+ 137:
+ 138:     bool cpu_opt;
+ 139:     CorenumAllocator corenum_allocator;
+ 140:     CallImportFunc call_import;
+ 141:
+ 142:     // Shared NOP+WFI sentinel used by the Dynarmic as the halt return address
+ 143:     Block halt_instruction;
+ 144:     Address halt_instruction_pc;
+ 145:
+ 146:     ObjectStore obj_store;
+ 147:
+ 148:     uint64_t start_tick;
+ 149:     SceRtcTick base_tick;
+ 150:     Ptr<SceProcessParam> process_param;
+ 151:     Ptr<void> client_vtable = Ptr<void>(0);
+ 152:     Ptr<Address> shellsvc_client = Ptr<Address>(0);
+ 153:     Ptr<void> libc_dso_handle_main = Ptr<void>(0);
+ 154:
+ 155:     Debugger debugger;
+ 156:
+ 157:     // kubridge exception handlers (DABT=0, PABT=1, UNDEF=2)
+ 158:     static constexpr int EXCEPTION_HANDLER_MAX = 3;
+ 159:     std::atomic<Address> exception_handlers[EXCEPTION_HANDLER_MAX]{};
+ 160:     std::mutex thread_lifetime_mutex;
+ 161:     std::condition_variable thread_deleted_cond;
+ 162:     // Protected by thread_lifetime_mutex. Counts ThreadState objects until
+ 163:     // all their members, including MemState-backed allocations, are destroyed.
+ 164:     uint32_t live_thread_states = 0;
+ 165:
+ 166:
+ 167:     SceUID get_next_uid() {
+ 168:         return next_uid++;
+ 169:     }
+ 170:
+ 171:     bool init(MemState &mem, const CallImportFunc &call_import, bool cpu_opt);
+ 172:     void deinit(MemState &mem);
+ 173:     void load_process_param(MemState &mem, Ptr<uint32_t> ptr);
+ 174:     ThreadStatePtr create_thread(MemState &mem, const char *name, Ptr<const void> entry_point = Ptr<const void>(0));
+ 175:     ThreadStatePtr create_thread(MemState &mem, const char *name, Ptr<const void> entry_point, int init_priority, SceInt32 affinity_mask, int stack_size, const SceKernelThreadOptParam *option);
+ 176:
+ 177:     ThreadStatePtr get_thread(SceUID thread_id);
+ 178:     Ptr<Ptr<void>> get_thread_tls_addr(MemState &mem, SceUID thread_id, int key);
+ 179:
+ 180:     bool is_threads_paused() { return !paused_threads_status.empty(); }
+
+============================================================================
+vita3k/app/src/session_controller.cpp
+============================================================================
+
+--- Lines 195-276 ---
+ 195:         destroy(emuenv);
+ 196:     } else if (renderer_was_initialized) {
+ 197:         if (emuenv.renderer) {
+ 198:             emuenv.renderer->cleanup();
+ 199:             emuenv.renderer.reset();
+ 200:         }
+ 201:         abort_game_launch(emuenv);
+ 202:     } else {
+ 203:         abort_game_launch(emuenv);
+ 204:     }
+ 205:
+ 206:     if (needs_renderer_cleanup && active_frame_host)
+ 207:         active_frame_host->get().destroy_render_context();
+ 208:
+ 209:     emuenv.motion.clear_device_motion_support();
+ 210:
+ 211:     {
+ 212:         std::lock_guard<std::mutex> lock(mutex);
+ 213:         reset_session_tracking();
+ 214:     }
+ 215: }
+ 216:
+ 217: void AppSessionController::apply_runtime_state_locked() {
+ 218:     const bool paused = active_pause_reasons.load(std::memory_order_relaxed) != 0;
+ 219:     const bool currently_paused = emuenv.kernel.is_threads_paused();
+ 220:     if (currently_paused != paused) {
+ 221:         if (paused)
+ 222:             emuenv.kernel.pause_threads();
+ 223:         else
+ 224:             emuenv.kernel.resume_threads();
+ 225:     }
+ 226:
+ 227:     if (emuenv.audio.adapter)
+ 228:         emuenv.audio.switch_state(paused);
+ 229:
+ 230:     emuenv.drop_inputs = paused;
+ 231:
+ 232:     const bool overlay_intercepted = paused || input_intercepted;
+ 233:     emuenv.ctrl.overlay_input_intercepted.store(overlay_intercepted, std::memory_order_relaxed);
+ 234:
+ 235:     emuenv.renderer->paused.store(paused, std::memory_order_relaxed);
+ 236: }
+ 237:
+ 238: void AppSessionController::set_phase(const AppSessionPhase next_phase) {
+ 239:     const AppSessionPhase current = current_phase.load(std::memory_order_relaxed);
+ 240:     if (current == next_phase)
+ 241:         return;
+ 242:
+ 243:     LOG_DEBUG("App session phase: {} -> {}", to_string(current), to_string(next_phase));
+ 244:     current_phase.store(next_phase, std::memory_order_release);
+ 245: }
+ 246:
+ 247: void AppSessionController::reset_session_tracking() {
+ 248:     frame_host.reset();
+ 249:     active_launch_request = {};
+ 250:     active_pause_reasons.store(0, std::memory_order_release);
+ 251:     renderer_initialized = false;
+ 252:     runtime_initialized = false;
+ 253:     input_intercepted = false;
+ 254:     set_phase(AppSessionPhase::Idle);
+ 255: }
+ 256:
+ 257: const char *to_string(const AppSessionPhase phase) {
+ 258:     switch (phase) {
+ 259:     case AppSessionPhase::Idle:
+ 260:         return "Idle";
+ 261:     case AppSessionPhase::Launching:
+ 262:         return "Launching";
+ 263:     case AppSessionPhase::Running:
+ 264:         return "Running";
+ 265:     case AppSessionPhase::Stopping:
+ 266:         return "Stopping";
+ 267:     }
+ 268:
+ 269:     return "Unknown";
+ 270: }
+ 271:
+ 272: uint32_t to_pause_mask(const AppSessionPauseReason reason) {
+ 273:     return static_cast<uint32_t>(reason);
+ 274: }
+ 275:
+ 276: } // namespace app
+
+============================================================================
+vita3k/app/src/app_init.cpp
+============================================================================
+
+--- Lines 468-610 ---
+ 468: void shutdown_app_runtime(EmuEnvState &state) {
+ 469:     state.audio.stop_all_ports();
+ 470:
+ 471:     gxm::shutdown(state);
+ 472:
+ 473:     state.net.abort_all();
+ 474:     state.http.shutdown_connections();
+ 475:
+ 476:     state.kernel.process_exit();
+ 477:
+ 478:     state.motion.reset_runtime();
+ 479:
+ 480:     state.audio.deinit();
+ 481:
+ 482:     state.renderer->preclose_action();
+ 483:     renderer::stop_render_thread(*state.renderer);
+ 484:     gxm::destroy_all_contexts(state, true);
+ 485:     gxm::destroy_all_render_targets(state, true);
+ 486:     state.gxm.deinit();
+ 487:     state.overlay_manager.reset();
+ 488:
+ 489:     state.display.deinit();
+ 490:
+ 491:     state.netctl.deinit();
+ 492:
+ 493:     ngs::deinit(state.ngs, state.mem);
+ 494:
+ 495:     // trophy (maybe namespace this?)
+ 496:     deinit(state.np);
+ 497:
+ 498:     state.http.deinit();
+ 499:
+ 500:     state.net.deinit();
+ 501:
+ 502:     io_deinit(state.io);
+ 503:
+ 504:     state.camera.deinit();
+ 505:
+ 506:     state.common_dialog.deinit();
+ 507:
+ 508:     state.ime.deinit();
+ 509:
+ 510:     state.touch.reset_runtime();
+ 511:
+ 512:     state.sfo_handle.header = {};
+ 513:     state.sfo_handle.entries.clear();
+ 514:
+ 515:     state.license_content_id.clear();
+ 516:     state.license_title_id.clear();
+ 517:
+ 518:     state.app_info = {};
+ 519:
+ 520:     state.regmgr.system_dreg.clear();
+ 521:     state.regmgr.system_dreg_path.clear();
+ 522:     state.regmgr.reg_category_template.clear();
+ 523:     state.regmgr.reg_template.clear();
+ 524:
+ 525:     state.kernel.deinit(state.mem);
+ 526:
+ 527:     state.renderer->cleanup();
+ 528:     state.renderer.reset();
+ 529:
+ 530:     deinit_mem(state.mem);
+ 531: }
+ 532:
+ 533: void reset_app_state(EmuEnvState &state) {
+ 534:     app::reset_perf_metrics(state);
+ 535:
+ 536:     state.app_path.clear();
+ 537:     state.current_app_title.clear();
+ 538:     state.self_name.clear();
+ 539:     state.self_path.clear();
+ 540:     state.main_thread_id = 0;
+ 541:     state.drop_inputs = false;
+ 542:     state.missing_nids.clear();
+ 543:     state.clear_app_launch_request();
+ 544:
+ 545:     state.ctrl.reset_runtime();
+ 546:     cheat::unload(state.cheat);
+ 547:     set_current_config(state, "");
+ 548:
+ 549: #if USE_DISCORD
+ 550:     if (state.cfg.discord_rich_presence)
+ 551:         discordrpc::update_presence();
+ 552: #endif
+ 553:
+ 554:     // re-init
+ 555:     init_libraries(state);
+ 556:
+ 557:     if (!init(state.io, state.cache_path, state.log_path, state.vita_fs_path, state.cfg.console)) {
+ 558:         LOG_ERROR("Failed to re-initialize file system after deinit!");
+ 559:     }
+ 560: }
+ 561:
+ 562: bool late_init(EmuEnvState &state) {
+ 563:     // note: mem is not initialized yet but that's not an issue
+ 564:     // the renderer is not using it yet, just storing it for later uses
+ 565:     state.renderer->late_init(state.cfg, state.app_path, state.mem);
+ 566:
+ 567:     const bool need_page_table = state.renderer->mapping_method == MappingMethod::PageTable || state.renderer->mapping_method == MappingMethod::NativeBuffer;
+ 568:     if (!init(state.mem, need_page_table)) {
+ 569:         LOG_ERROR("Failed to initialize memory for emulator state!");
+ 570:         return false;
+ 571:     }
+ 572:
+ 573:     if (!state.audio.init(state.cfg.current_config.audio_backend)) {
+ 574:         LOG_WARN("Failed to initialize audio! Audio will not work.");
+ 575:     }
+ 576:
+ 577:     if (!ngs::init(state.ngs, state.mem)) {
+ 578:         LOG_ERROR("Failed to initialize ngs.");
+ 579:         return false;
+ 580:     }
+ 581:
+ 582:     return true;
+ 583: }
+ 584:
+ 585: void apply_renderer_config(EmuEnvState &emuenv) {
+ 586:     auto &r = *emuenv.renderer;
+ 587:     const auto &cc = emuenv.cfg.current_config;
+ 588:
+ 589:     r.res_multiplier = cc.resolution_multiplier;
+ 590:     r.set_vsync_state(cc.v_sync);
+ 591:     r.set_surface_sync_state(cc.disable_surface_sync);
+ 592:     r.set_screen_filter(cc.screen_filter);
+ 593:     r.set_anisotropic_filtering(cc.anisotropic_filtering);
+ 594:     r.set_stretch_display(cc.stretch_the_display_area);
+ 595:     r.stretch_hd_pixel_perfect(cc.fullscreen_hd_res_pixel_perfect);
+ 596:     r.set_async_compilation(cc.async_pipeline_compilation);
+ 597:     r.get_texture_cache()->set_replacement_state(cc.import_textures, cc.export_textures, cc.export_as_png);
+ 598: #ifdef __ANDROID__
+ 599:     if (r.support_custom_drivers())
+ 600:         r.set_turbo_mode(emuenv.cfg.turbo_mode);
+ 601: #endif
+ 602:     emuenv.display.fps_hack = cc.fps_hack;
+ 603:
+ 604:     if (!emuenv.overlay_manager)
+ 605:         emuenv.overlay_manager = std::make_unique<overlay::display_manager>();
+ 606:     r.overlay_manager = emuenv.overlay_manager.get();
+ 607:     emuenv.overlay_manager->set_flip_request_callback([&r]() {
+ 608:         r.async_flip_requested.store(true, std::memory_order_relaxed);
+ 609:         r.command_buffer_queue.wake();
+ 610:     });
+
+============================================================================
+ALL THREADSTATE POINTER AND GET_THREAD REFERENCES
+============================================================================
+vita3k/interface.cpp:693: const ThreadStatePtr main_thread = emuenv.kernel.create_thread(emuenv.mem, emuenv.io.title_id.c_str(), entry_point, priority, affinity, stack_size, nullptr);
+vita3k/modules/module_parent.cpp:167: const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/module_parent.cpp:337: const ThreadStatePtr module_thread = emuenv.kernel.create_thread(emuenv.mem, module_name, module_start, priority, affinity, stack_size, nullptr);
+vita3k/modules/module_parent.cpp:361: const ThreadStatePtr module_thread = emuenv.kernel.create_thread(emuenv.mem, module_name, module_stop, priority, affinity, stack_size, nullptr);
+vita3k/gdbstub/src/gdb.cpp:488: auto thread = state.kernel.get_thread(state.gdb.inferior_thread);
+vita3k/ngs/src/ngs.cpp:325: const ThreadStatePtr thread = kernel.get_thread(thread_id);
+vita3k/ngs/src/scheduler.cpp:181: kern.get_thread(thread_id)->run_callback(op.release_data.callback, { Ptr<void>(op.release_data.rack, mem).address() });
+vita3k/display/src/display.cpp:79: ThreadStatePtr target_wait = vblank_wait_info.target_thread;
+vita3k/display/src/display.cpp:107: void wait_vblank(DisplayState &display, KernelState &kernel, const ThreadStatePtr &wait_thread, const uint64_t target_vcount, const bool is_cb) {
+vita3k/display/include/display/functions.h:30: void wait_vblank(DisplayState &display, KernelState &kernel, const ThreadStatePtr &wait_thread, const uint64_t target_vcount, const bool is_cb);
+vita3k/display/include/display/state.h:35: typedef std::shared_ptr<ThreadState> ThreadStatePtr;
+vita3k/display/include/display/state.h:38: ThreadStatePtr target_thread;
+vita3k/modules/SceNpCommon/SceNpCommon.cpp:53: const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceLibc/SceLibc.cpp:969: const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceLibc/SceLibc.cpp:1130: const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceLibDbg/SceDbg.cpp:29: const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceLibDbg/SceDbg.cpp:54: const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceDisplay/SceDisplay.cpp:33: const auto &thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceAudio/SceAudio.cpp:204: const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceSysmem/SceSysclibForDriver.cpp:175: const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceSysmem/SceSysmem.cpp:295: invalidate_jit_cache(*emuenv.kernel.get_thread(thread_id)->cpu, base, size);
+vita3k/modules/SceSysmem/SceProcEventForDriver.cpp:62: emuenv.kernel.get_thread(thread_id)->run_callback(handler->create.address(), { 1, 0, a3.address() });
+vita3k/modules/SceSysmem/SceProcEventForDriver.cpp:64: emuenv.kernel.get_thread(thread_id)->run_callback(handler->start.address(), { 1, 0, a3.address() });
+vita3k/modules/SceNpManager/SceNpManager.cpp:72: const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceHttp/SceHttp.cpp:267: const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceIme/SceIme.cpp:39: auto thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceNetCtl/SceNetCtl.cpp:489: const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceGxm/SceGxm.cpp:898: const ThreadStatePtr display_thread = emuenv.kernel.get_thread(emuenv.gxm.display_queue_thread);
+vita3k/modules/SceGxm/SceGxm.cpp:953: const ThreadStatePtr thread = kernel.get_thread(thread_id);
+vita3k/modules/SceGxm/SceGxm.cpp:2857: const ThreadStatePtr main_thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceGxm/SceGxm.cpp:2858: const ThreadStatePtr display_queue_thread = emuenv.kernel.create_thread(emuenv.mem, "SceGxmDisplayQueue", Ptr<void>(0), SCE_KERNEL_HIGHEST_PRIORITY_USER, SCE_KERNEL_THREAD_CPU_AFFINITY_MASK_DEFAULT, SCE_KERNEL_STACK_SIZE_USER_DEFAULT, nullptr);
+vita3k/modules/SceGxm/SceGxm.cpp:4449: const auto thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceGxm/SceGxm.cpp:4475: const auto thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceGxm/SceGxm.cpp:4884: emuenv.kernel.get_thread(emuenv.gxm.display_queue_thread)->exit_delete();
+vita3k/modules/SceKernelThreadMgr/SceThreadmgrForDriver.cpp:93: const ThreadStatePtr thread = emuenv.kernel.create_thread(emuenv.mem, name, entry.cast<void>(), initPriority, cpuAffinityMask, stackSize, nullptr);
+vita3k/modules/SceKernelThreadMgr/SceThreadmgrCoredumpTime.cpp:27: const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceKernelThreadMgr/SceThreadmgr.cpp:437: const ThreadStatePtr thread = emuenv.kernel.get_thread(threadId);
+vita3k/modules/SceKernelThreadMgr/SceThreadmgr.cpp:469: const ThreadStatePtr thread = emuenv.kernel.get_thread(thid ? thid : thread_id);
+vita3k/modules/SceKernelThreadMgr/SceThreadmgr.cpp:486: const ThreadStatePtr thread = emuenv.kernel.get_thread(thid ? thid : thread_id);
+vita3k/modules/SceKernelThreadMgr/SceThreadmgr.cpp:503: const ThreadStatePtr thread = emuenv.kernel.get_thread(threadId ? threadId : thread_id);
+vita3k/modules/SceKernelThreadMgr/SceThreadmgr.cpp:668: const ThreadStatePtr thread = emuenv.kernel.get_thread(threadId);
+vita3k/modules/SceKernelThreadMgr/SceThreadmgr.cpp:722: auto thread = emuenv.kernel.get_thread(thid);
+vita3k/modules/SceKernelThreadMgr/SceThreadmgr.cpp:834: const auto thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceKernelThreadMgr/SceThreadmgr.cpp:847: static int wait_thread_end(KernelState &kernel, ThreadStatePtr &waiter, ThreadStatePtr &target, int *stat) {
+vita3k/modules/SceKernelThreadMgr/SceThreadmgr.cpp:869: auto waiter = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceKernelThreadMgr/SceThreadmgr.cpp:870: auto target = emuenv.kernel.get_thread(thid);
+vita3k/modules/SceKernelThreadMgr/SceThreadmgr.cpp:879: auto waiter = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceKernelThreadMgr/SceThreadmgr.cpp:880: auto target = emuenv.kernel.get_thread(thid);
+vita3k/modules/SceKernelThreadMgr/SceThreadmgr.cpp:906: const ThreadStatePtr thread = emuenv.kernel.get_thread(thid ? thid : thread_id);
+vita3k/modules/SceKernelThreadMgr/SceThreadmgr.cpp:923: const ThreadStatePtr thread = emuenv.kernel.get_thread(thid ? thid : thread_id);
+vita3k/modules/SceKernelThreadMgr/SceThreadmgr.cpp:930: priority = emuenv.kernel.get_thread(thread_id)->priority;
+vita3k/modules/SceKernelThreadMgr/SceThreadmgr.cpp:961: const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceKernelThreadMgr/SceThreadmgr.cpp:1041: ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceKernelThreadMgr/SceThreadmgr.cpp:1057: const ThreadStatePtr thread = emuenv.kernel.create_thread(emuenv.mem, name, entry.cast<void>(), init_priority, options->cpu_affinity_mask, options->stack_size, options->option.get(emuenv.mem));
+vita3k/modules/SceKernelThreadMgr/SceThreadmgr.cpp:1067: const ThreadStatePtr thread = kernel.get_thread(thread_id);
+vita3k/modules/SceKernelThreadMgr/SceThreadmgr.cpp:1118: auto cb_owner_thread = emuenv.kernel.get_thread(cb->get_owner_thread_id());
+vita3k/modules/SceKernelThreadMgr/SceThreadmgr.cpp:1165: const ThreadStatePtr thread = emuenv.kernel.get_thread(thid);
+vita3k/modules/SceKernelThreadMgr/SceThreadmgr.cpp:1183: const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceKernelThreadMgr/SceThreadmgr.cpp:1340: const ThreadStatePtr thread = emuenv.kernel.get_thread(threadId);
+vita3k/modules/SceKernelThreadMgr/SceThreadmgr.cpp:1352: const auto thread = emuenv.kernel.get_thread(target_thread_id);
+vita3k/modules/SceKernelThreadMgr/SceThreadmgr.cpp:1418: const ThreadStatePtr thread = emuenv.kernel.get_thread(threadId);
+vita3k/modules/SceFiber/SceFiber.cpp:102: static std::string describe_fiber(FiberState &state, const ThreadStatePtr &thread, SceFiber *fiber) {
+vita3k/modules/SceFiber/SceFiber.cpp:113: static void log_fiber(FiberState &state, const ThreadStatePtr &thread, SceFiber *fiber, const std::string &function_name) {
+vita3k/modules/SceFiber/SceFiber.cpp:117: static void setup_fiber_to_run(EmuEnvState &emuenv, const ThreadStatePtr &thread, SceFiber *fiber, uint32_t thread_sp, const uint32_t &argOnRunTo) {
+vita3k/modules/SceFiber/SceFiber.cpp:136: static void initialize_fiber(EmuEnvState &emuenv, const ThreadStatePtr &thread, SceFiber *fiber, const char *name, Ptr<SceFiberEntry> entry, SceUInt32 argOnInitialize, Ptr<void> addrContext, SceSize sizeContext, SceFiberOptParam *params) {
+vita3k/modules/SceFiber/SceFiber.cpp:160: const auto thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceFiber/SceFiber.cpp:187: const auto thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceFiber/SceFiber.cpp:227: const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceFiber/SceFiber.cpp:251: const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceFiber/SceFiber.cpp:307: const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceFiber/SceFiber.cpp:341: const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceFiber/SceFiber.cpp:372: const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceFiber/SceFiber.cpp:411: const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceLibKernel/SceLibKernel.cpp:92: const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceLibKernel/SceLibKernel.cpp:103: const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceLibKernel/SceLibKernel.cpp:300: const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceLibKernel/SceLibKernel.cpp:319: const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceLibKernel/SceLibKernel.cpp:457: const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceLibKernel/SceLibKernel.cpp:476: const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceLibKernel/SceLibKernel.cpp:600: const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceLibKernel/SceLibKernel.cpp:1164: const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceLibKernel/SceLibKernel.cpp:1188: const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceLibKernel/SceLibKernel.cpp:1233: const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceLibKernel/SceLibKernel.cpp:1245: const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceLibKernel/SceLibKernel.cpp:1262: const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceLibKernel/SceLibKernel.cpp:1309: return emuenv.kernel.get_thread(thread_id)->tls.get_ptr<int>().get(emuenv.mem)[TLS_VFP_EXCEPTION];
+vita3k/modules/SceLibKernel/SceLibKernel.cpp:1446: const ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceLibKernel/SceLibKernel.cpp:1461: const ThreadStatePtr thread = emuenv.kernel.get_thread(thid ? thid : thread_id);
+vita3k/modules/SceLibKernel/SceKernelForMono.cpp:53: ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceAvPlayer/SceAvPlayer.cpp:229: static void run_event_callback(EmuEnvState &emuenv, const ThreadStatePtr &thread, const PlayerPtr &player_info, uint32_t event_id, uint32_t source_id, Ptr<void> event_data) {
+vita3k/modules/SceAvPlayer/SceAvPlayer.cpp:243: const auto thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceAvPlayer/SceAvPlayer.cpp:287: const auto thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceAvPlayer/SceAvPlayer.cpp:473: const auto thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceAvPlayer/SceAvPlayer.cpp:486: const auto thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceAvPlayer/SceAvPlayer.cpp:511: const auto thread = emuenv.kernel.get_thread(thread_id);
+vita3k/modules/SceAvPlayer/SceAvPlayer.cpp:520: const auto thread = emuenv.kernel.get_thread(thread_id);
+vita3k/ctrl/src/ctrl.cpp:308: auto thread = emuenv.kernel.get_thread(thread_id);
+vita3k/kernel/src/kernel.cpp:64: const ThreadStatePtr thread = params.kernel->get_thread(params.thid);
+vita3k/kernel/src/kernel.cpp:141: ThreadStatePtr KernelState::get_thread(SceUID thread_id) {
+vita3k/kernel/src/kernel.cpp:145: ThreadStatePtr KernelState::create_thread(MemState &mem, const char *name, Ptr<const void> entry_point) {
+vita3k/kernel/src/kernel.cpp:149: ThreadStatePtr KernelState::create_thread(MemState &mem, const char *name, Ptr<const void> entry_point, int init_priority, SceInt32 affinity_mask, int stack_size, const SceKernelThreadOptParam *option) {
+vita3k/kernel/src/kernel.cpp:150: ThreadStatePtr thread = std::make_shared<ThreadState>(get_next_uid(), *this, mem);
+vita3k/kernel/src/kernel.cpp:175: const ThreadStatePtr thread = get_thread(thread_id);
+vita3k/kernel/src/callback.cpp:26: ThreadStatePtr thread = kernel.get_thread(thread_id);
+vita3k/kernel/src/callback.cpp:94: int ret = kernel.get_thread(this->thread_id)->run_callback(this->cb_func.address(), args);
+vita3k/kernel/src/sync_primitives.cpp:80: inline static int handle_timeout(KernelState &kernel, const ThreadStatePtr &thread, std::unique_lock<std::mutex> &thread_lock,
+vita3k/kernel/src/sync_primitives.cpp:168: const ThreadStatePtr thread = kernel.get_thread(thread_id);
+vita3k/kernel/src/sync_primitives.cpp:418: const ThreadStatePtr thread = kernel.get_thread(thread_id);
+vita3k/kernel/src/sync_primitives.cpp:568: const ThreadStatePtr thread = kernel.get_thread(thread_id);
+vita3k/kernel/src/sync_primitives.cpp:627: const ThreadStatePtr thread = kernel.get_thread(thread_id);
+vita3k/kernel/src/sync_primitives.cpp:719: const ThreadStatePtr current_thread = kernel.get_thread(thread_id);
+vita3k/kernel/src/sync_primitives.cpp:841: const ThreadStatePtr thread = kernel.get_thread(thread_id);
+vita3k/kernel/src/sync_primitives.cpp:895: const ThreadStatePtr current_thread = kernel.get_thread(thread_id);
+vita3k/kernel/src/sync_primitives.cpp:957: const ThreadStatePtr thread = kernel.get_thread(thread_id);
+vita3k/kernel/src/sync_primitives.cpp:1049: const ThreadStatePtr thread = kernel.get_thread(thread_id);
+vita3k/kernel/src/sync_primitives.cpp:1245: const ThreadStatePtr thread = kernel.get_thread(thread_id);
+vita3k/kernel/src/sync_primitives.cpp:1289: ThreadStatePtr waiting_thread = lock_and_find(signal_target.thread_id, kernel.threads, kernel.mutex);
+vita3k/kernel/src/sync_primitives.cpp:1431: const ThreadStatePtr thread = kernel.get_thread(thread_id);
+vita3k/kernel/src/sync_primitives.cpp:1702: const ThreadStatePtr thread = kernel.get_thread(thread_id);
+vita3k/kernel/src/sync_primitives.cpp:1821: const ThreadStatePtr thread = kernel.get_thread(thread_id);
+vita3k/kernel/include/kernel/callback.h:27: typedef std::shared_ptr<ThreadState> ThreadStatePtr;
+vita3k/kernel/include/kernel/state.h:56: typedef std::shared_ptr<ThreadState> ThreadStatePtr;
+vita3k/kernel/include/kernel/state.h:59: typedef std::map<SceUID, ThreadStatePtr> ThreadStatePtrs;
+vita3k/kernel/include/kernel/state.h:123: ThreadStatePtrs threads;
+vita3k/kernel/include/kernel/state.h:174: ThreadStatePtr create_thread(MemState &mem, const char *name, Ptr<const void> entry_point = Ptr<const void>(0));
+vita3k/kernel/include/kernel/state.h:175: ThreadStatePtr create_thread(MemState &mem, const char *name, Ptr<const void> entry_point, int init_priority, SceInt32 affinity_mask, int stack_size, const SceKernelThreadOptParam *option);
+vita3k/kernel/include/kernel/state.h:177: ThreadStatePtr get_thread(SceUID thread_id);
+vita3k/kernel/include/kernel/sync_primitives.h:27: ThreadStatePtr thread;
+vita3k/kernel/include/kernel/sync_primitives.h:70: bool operator==(const ThreadStatePtr &rhs) const {
+vita3k/kernel/include/kernel/sync_primitives.h:128: ThreadStatePtr owner;
+vita3k/kernel/include/kernel/sync_primitives.h:143: typedef std::map<ThreadStatePtr, int> RWLockOwners;
+vita3k/kernel/include/kernel/thread/thread_data_queue.h:102: virtual ThreadDataQueueInterator<T> find(const ThreadStatePtr &val) = 0;
+vita3k/kernel/include/kernel/thread/thread_data_queue.h:176: ThreadDataQueueInterator<T> find(const ThreadStatePtr &val) override {
+vita3k/kernel/include/kernel/thread/thread_data_queue.h:260: ThreadDataQueueInterator<T> find(const ThreadStatePtr &val) override {
+vita3k/kernel/include/kernel/thread/thread_state.h:147: typedef std::shared_ptr<ThreadState> ThreadStatePtr;
+vita3k/touch/src/touch.cpp:326: auto thread = emuenv.kernel.get_thread(thread_id);
+vita3k/gui-qt/src/debug_widget.cpp:363: ThreadStatePtr thread = emuenv.kernel.get_thread(thread_id);
+
+============================================================================
+THREADSTATE DESTRUCTOR AND MEMORY FREE IMPLEMENTATIONS
+============================================================================
+
+--- vita3k/mem/src/mem.cpp:477-507 ---
+ 477:
+ 478: Block alloc_block(MemState &mem, uint32_t size, const char *name, Address start_addr) {
+ 479:     const Address address = alloc(mem, size, name, start_addr);
+ 480:     return Block(address, [&mem](Address stack) {
+ 481:         free(mem, stack);
+ 482:     });
+ 483: }
+ 484:
+ 485: void free(MemState &state, Address address) {
+ 486:     const std::lock_guard<std::mutex> lock(state.generation_mutex);
+ 487:     const uint32_t page_num = address / STANDARD_PAGE_SIZE;
+ 488:     assert(page_num >= 0);
+ 489:
+ 490:     AllocMemPage &page = state.alloc_table[page_num];
+ 491:     if (!page.allocated) {
+ 492:         LOG_CRITICAL("Freeing unallocated page");
+ 493:     }
+ 494:     page.allocated = 0;
+ 495:
+ 496:     state.allocator.free(page_num, page.size);
+ 497:     if (PAGE_NAME_TRACKING) {
+ 498:         state.page_name_map.erase(page_num);
+ 499:     }
+ 500:
+ 501:     assert(!state.use_page_table || state.page_table[address / KiB(4)] == state.memory.get());
+ 502:     const Address region_start = page_num * STANDARD_PAGE_SIZE;
+ 503:     const Address region_end = region_start + page.size * STANDARD_PAGE_SIZE;
+ 504:
+ 505:     Address host_page = align_down(region_start, state.host_page_size);
+ 506:     Address batch_start = 0;
+ 507:     uint32_t batch_size = 0;
+
+--- vita3k/mem/include/mem/functions.h:60-70 ---
+  60: void remove_external_mapping(MemState &mem, uint8_t *addr_ptr, uint32_t size);
+  61: bool is_protecting(MemState &state, Address addr, MemPerm *perm = nullptr);
+  62: bool is_valid_addr(const MemState &state, Address addr);
+  63: bool is_valid_addr_range(const MemState &state, Address start, Address end);
+  64: bool handle_access_violation(MemState &state, uint8_t *addr, bool write) noexcept;
+  65: Block alloc_block(MemState &mem, uint32_t size, const char *name, Address start_addr = user_main_memory_start);
+  66: Address alloc_at(MemState &state, Address address, uint32_t size, const char *name);
+  67: Address try_alloc_at(MemState &state, Address address, uint32_t size, const char *name);
+  68: void free(MemState &state, Address address);
+  69: uint32_t mem_available(MemState &state);
+  70: const char *mem_name(Address address, MemState &state);
+
+--- vita3k/mem/include/mem/ptr.h:126-137 ---
+ 126:
+ 127:     T *const memory = ptr.get(mem);
+ 128:     new (memory) T;
+ 129:
+ 130:     return ptr;
+ 131: }
+ 132:
+ 133: template <class T>
+ 134: void free(MemState &mem, const Ptr<T> &ptr) {
+ 135:     ptr.get(mem)->~T();
+ 136:     free(mem, ptr.address());
+ 137: }
+
+--- vita3k/mem/include/mem/allocator.h:30-43 ---
+  30: public:
+  31:     BitmapAllocator() = default;
+  32:     explicit BitmapAllocator(const std::size_t total_bits);
+  33:
+  34:     void set_maximum(const std::size_t total_bits);
+  35:
+  36:     int allocate_from(const std::uint32_t start_offset, std::uint32_t &size, const bool best_fit = false);
+  37:     int allocate_at(const std::uint32_t start_offset, std::uint32_t size);
+  38:     void free(const std::uint32_t offset, const std::uint32_t size);
+  39:     void reset();
+  40:
+  41:     // Count free bits in [offset, offset_end) (exclusive)
+  42:     int free_slot_count(const std::uint32_t offset, const std::uint32_t offset_end) const;
+  43: };
