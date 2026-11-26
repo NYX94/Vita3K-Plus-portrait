@@ -57,6 +57,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import coil.compose.AsyncImage
+import org.vita3k.emulator.BuildConfig
 import org.vita3k.emulator.R
 import org.vita3k.emulator.data.FirmwareInstallState
 import org.vita3k.emulator.data.AppInfo
@@ -478,7 +479,7 @@ private data class ParsedAppVersion(
 )
 
 private const val ABOUT_DESCRIPTION_HTML =
-    """Vita3K is the world's first functional PS Vita and PS TV emulator, open source and written in C++ for Windows, Linux, macOS, and Android. Visit <a href="https://vita3k.org/quickstart.html">vita3k.org</a> for more info, browse the project on <a href="https://github.com/Vita3K/Vita3K">GitHub</a> if you want to contribute, or support us on <a href="https://ko-fi.com/vita3k">Ko-fi</a>."""
+    """Vita3K+ portrait is an Android-focused portrait edition based on Vita3K+ and the open-source Vita3K emulator. Visit <a href="https://github.com/NYX94/Vita3K-Plus-portrait">the Vita3K+ portrait repository</a> for project updates, or <a href="https://vita3k.org/quickstart.html">the Vita3K website</a> for emulator information."""
 
 private const val ABOUT_CREDIT_HTML =
     """Icon by <a href="https://gordonmackayillustration.blogspot.com">Gordon Mackay</a>."""
@@ -633,21 +634,29 @@ private fun AppsListTitle(appVersion: String) {
         }
     }
 
+    val buildLabel = stringResource(
+        R.string.apps_list_portrait_build,
+        BuildConfig.PORTRAIT_BUILD_NUMBER
+    )
+    val displayedSubtitle = if (subtitle.isBlank()) {
+        buildLabel
+    } else {
+        "$subtitle • $buildLabel"
+    }
+
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(
             text = stringResource(R.string.apps_list_app_title),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
-        if (subtitle.isNotBlank()) {
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
+        Text(
+            text = displayedSubtitle,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 

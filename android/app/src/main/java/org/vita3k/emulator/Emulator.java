@@ -9,6 +9,8 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.hardware.input.InputManager;
 import android.os.Build;
+import android.window.OnBackInvokedDispatcher;
+import android.window.OnBackInvokedCallback;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.util.Log;
@@ -68,6 +70,7 @@ public class Emulator extends SDLActivity
         implements InputManager.InputDeviceListener, LifecycleOwner, SavedStateRegistryOwner, ViewModelStoreOwner
 {
     private static final String TAG = "Vita3K";
+    private final OnBackInvokedCallback systemBackCallback = this::handleSystemBack;
     private static final long IME_RESTORE_DELAY_MS = 250L;
     private static final float VITA_DISPLAY_ASPECT_RATIO = 960f / 544f;
     public static final String EXTRA_TITLE_ID = "title_id";
@@ -365,6 +368,11 @@ public class Emulator extends SDLActivity
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                    OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+                    systemBackCallback);
+        }
         applyRequestedDisplayOrientation();
         if (!ensureNativeSessionInitialized()) {
             finish();
@@ -432,6 +440,9 @@ public class Emulator extends SDLActivity
 
     @Override
     protected void onDestroy() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(systemBackCallback);
+        }
         if (inputManager != null) {
             inputManager.unregisterInputDeviceListener(this);
         }
@@ -450,12 +461,22 @@ public class Emulator extends SDLActivity
         super.onSaveInstanceState(outState);
     }
 
-    @Override
-    public void onBackPressed() {
-        if (sessionViewModel != null && sessionViewModel.handleBackPressed(this))
+    private void handleSystemBack() {
+        if (nativeKeyboardRequested) {
+            dismissImeFromKeyboard(mTextEdit);
             return;
+        }
+
+        if (sessionViewModel != null && sessionViewModel.handleBackPressed(this)) {
+            return;
+        }
 
         super.onBackPressed();
+    }
+
+    @Override
+    public void onBackPressed() {
+        handleSystemBack();
     }
 
     @Override

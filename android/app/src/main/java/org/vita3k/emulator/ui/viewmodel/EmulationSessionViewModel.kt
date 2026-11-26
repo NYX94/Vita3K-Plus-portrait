@@ -103,7 +103,7 @@ class EmulationSessionViewModel(application: Application) : AndroidViewModel(app
                 true
             }
             else -> {
-                openMenu(emulator, pauseGame = false)
+                openMenu(emulator, pauseGame = true)
                 true
             }
         }
