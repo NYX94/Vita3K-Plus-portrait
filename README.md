@@ -4,10 +4,7 @@ An Android-focused portrait edition of Vita3K+, based on the open-source Vita3K 
 
 This is an independent community fork. Credit for the original emulator and Vita3K+ enhancements belongs to their respective projects and contributors.
 
-## Download
-
-Development APKs are built from this repository. Published releases will be listed on the [Vita3K+ portrait Releases page](https://github.com/NYX94/Vita3K-Plus-portrait/releases).
-
+Note: this fork was created with the help ChatGPT
 ## Android portrait edition
 
 - **Portrait split layout:** arrange the Vita display and on-screen controls for portrait gameplay.
