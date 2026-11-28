@@ -137,6 +137,8 @@ object NativeLib {
     external fun deleteUser(userId: String): Boolean
 
     // --- Running app session ---
+    /** Passes Android memory-pressure notifications to the renderer thread. Use level 0 to restore the normal cache budget. */
+    external fun notifyMemoryPressure(level: Int)
     /** Blocks or releases gameplay input without changing the native pause state. */
     external fun setInputIntercepted(intercepted: Boolean): Boolean
     /** Enables or clears a specific native pause reason bit for the running app session. */

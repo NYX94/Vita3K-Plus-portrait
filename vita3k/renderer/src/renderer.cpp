@@ -33,7 +33,30 @@
 #include <gxm/functions.h>
 #include <util/log.h>
 
+#include <mutex>
+#include <vector>
+
 namespace renderer {
+namespace {
+std::mutex memory_pressure_mutex;
+std::vector<int> memory_pressure_events;
+} // namespace
+
+void notify_memory_pressure(const int level) {
+    std::lock_guard lock(memory_pressure_mutex);
+    // This callback is infrequent. Keep a bounded event queue while preserving the order
+    // of trim and foreground-restore notifications.
+    if (memory_pressure_events.size() >= 16)
+        memory_pressure_events.erase(memory_pressure_events.begin());
+    memory_pressure_events.push_back(level);
+}
+
+std::vector<int> consume_memory_pressure_events() {
+    std::lock_guard lock(memory_pressure_mutex);
+    std::vector<int> events;
+    events.swap(memory_pressure_events);
+    return events;
+}
 
 void State::update_overlays() {
     if (!overlay_manager)

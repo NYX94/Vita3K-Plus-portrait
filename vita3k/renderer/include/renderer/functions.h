@@ -21,6 +21,7 @@
 #include <renderer/types.h>
 
 #include <string>
+#include <vector>
 
 struct MemState;
 struct FeatureState;
@@ -72,6 +73,10 @@ void process_batches(State &state, const FeatureState &features, MemState &mem, 
 void start_render_thread(State &state, DisplayState &display, GxmState &gxm, MemState &mem, Config &config);
 void stop_render_thread(State &state);
 bool init(FrameHost &frame, std::unique_ptr<State> &state, Backend backend, const Config &config, const Root &root_paths);
+
+// Android reports memory pressure on the UI thread; the renderer consumes these events safely on its own thread.
+void notify_memory_pressure(int level);
+std::vector<int> consume_memory_pressure_events();
 
 void set_depth_bias(State &state, Context *ctx, bool is_front, int factor, int units);
 void set_depth_func(State &state, Context *ctx, bool is_front, SceGxmDepthFunc depth_func);

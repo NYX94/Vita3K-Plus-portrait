@@ -412,6 +412,7 @@ public class Emulator extends SDLActivity
     @Override
     protected void onResume() {
         super.onResume();
+        NativeLib.INSTANCE.notifyMemoryPressure(0);
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME);
         refreshUiState(false);
         refreshNativeDisplayRotation();

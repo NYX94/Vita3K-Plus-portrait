@@ -63,6 +63,10 @@ struct VKTextureCache : public TextureCache {
     vk::CommandBuffer cmd_buffer = nullptr;
     bool is_texture_transfer_ready = false;
 
+    uint64_t base_texture_budget_bytes = 0;
+    uint64_t texture_budget_bytes = 0;
+    int memory_pressure_level = 0;
+
     VKTextureCache(VKState &state);
     // get an available staging buffer, wait for one if all are busy
     void prepare_staging_buffer(bool is_configure = false);
@@ -72,6 +76,8 @@ struct VKTextureCache : public TextureCache {
     void configure_texture(const SceGxmTexture &texture) override;
     void upload_texture_impl(SceGxmTextureBaseFormat base_format, uint32_t width, uint32_t height, uint32_t mip_index, const void *pixels, int face, uint32_t pixels_per_stride) override;
     void upload_done() override;
+    void set_memory_pressure(int level);
+    void trim_to_budget(uint64_t additional_bytes = 0);
 
     void configure_sampler(size_t index, const SceGxmTexture &texture, bool no_linear) override;
 

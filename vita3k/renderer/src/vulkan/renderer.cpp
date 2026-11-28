@@ -1214,6 +1214,10 @@ void VKState::render_frame(DisplayState &display, const GxmState &gxm, MemState 
 }
 
 void VKState::swap_window() {
+    // Memory notifications arrive on Android's UI thread. Apply them here on the renderer thread.
+    for (const int level : renderer::consume_memory_pressure_events())
+        texture_cache.set_memory_pressure(level);
+
     screen_renderer.swap_window();
 
     // look once a frame if we need to save the pipeline cache

@@ -23,11 +23,17 @@
 
 #include <gxm/functions.h>
 #include <gxm/types.h>
+
+#include <algorithm>
+#include <bit>
 #include <renderer/functions.h>
 #include <util/align.h>
 #include <vkutil/vkutil.h>
 
 namespace renderer::vulkan {
+namespace {
+constexpr uint64_t bytes_per_mib = 1024ULL * 1024ULL;
+}
 
 // return if this format can be used to read a depth stencil buffer
 // Only return the formats we support and make sense for now
@@ -80,6 +86,84 @@ void VKTextureCache::cleanup() {
     gxm_texture = nullptr;
     cmd_buffer = nullptr;
     is_texture_transfer_ready = false;
+    base_texture_budget_bytes = 0;
+    texture_budget_bytes = 0;
+    memory_pressure_level = 0;
+}
+
+void VKTextureCache::set_memory_pressure(const int level) {
+    if (level <= 0) {
+        if (memory_pressure_level != 0) {
+            memory_pressure_level = 0;
+            texture_budget_bytes = base_texture_budget_bytes;
+            LOG_INFO("[TEXMEM] Android foreground restore: texture budget back to {} MiB",
+                texture_budget_bytes / bytes_per_mib);
+        }
+        return;
+    }
+
+    memory_pressure_level = std::max(memory_pressure_level, level);
+    uint64_t new_budget = base_texture_budget_bytes / 2;
+    if (memory_pressure_level >= 20) {
+        new_budget = std::max<uint64_t>(32ULL * bytes_per_mib, base_texture_budget_bytes / 4);
+    } else if (base_texture_budget_bytes > 128ULL * bytes_per_mib) {
+        new_budget = std::max<uint64_t>(128ULL * bytes_per_mib, new_budget);
+    }
+    new_budget = std::min(new_budget, base_texture_budget_bytes);
+
+    if (new_budget != texture_budget_bytes) {
+        LOG_INFO("[TEXMEM] Android trim level {}: texture budget {} -> {} MiB",
+            memory_pressure_level, texture_budget_bytes / bytes_per_mib, new_budget / bytes_per_mib);
+        texture_budget_bytes = new_budget;
+    }
+    trim_to_budget();
+}
+
+void VKTextureCache::trim_to_budget(const uint64_t additional_bytes) {
+    if (texture_budget_bytes == 0 || texture_queue.items.empty())
+        return;
+
+    uint64_t cached_bytes = 0;
+    for (const auto &entry : textures) {
+        if (entry.texture.image)
+            cached_bytes += entry.memory_needed;
+    }
+
+    const uint64_t target_bytes = additional_bytes >= texture_budget_bytes
+        ? 0
+        : texture_budget_bytes - additional_bytes;
+    if (cached_bytes <= target_bytes)
+        return;
+
+    uint64_t evicted_bytes = 0;
+    size_t evicted_count = 0;
+    for (size_t attempt = 0; attempt < texture_queue.items.size() && cached_bytes > target_bytes; ++attempt) {
+        TextureCacheInfo *info = texture_queue.get_lru();
+        texture_queue.set_as_mru(info);
+        if (info->index < 0 || static_cast<size_t>(info->index) >= textures.size())
+            continue;
+
+        TextureCacheEntry &entry = textures[static_cast<size_t>(info->index)];
+        if (&entry == current_texture || !entry.texture.image)
+            continue;
+
+        const uint64_t released = entry.memory_needed;
+        texture_lookup.erase(std::bit_cast<TextureGxmDataRepr>(info->texture));
+        info->texture_size = 0;
+        info->dirty = false;
+        info->is_imported = false;
+        entry.memory_needed = 0;
+        // The frame destroy queue delays GPU destruction until earlier frames no longer reference this image.
+        state.frame().destroy_queue.add_image(entry.texture);
+        cached_bytes -= std::min(cached_bytes, released);
+        evicted_bytes += released;
+        ++evicted_count;
+    }
+
+    if (evicted_count > 0) {
+        LOG_INFO("[TEXMEM] evicted {} cached textures ({} MiB); estimated cache {} MiB / {} MiB budget",
+            evicted_count, evicted_bytes / bytes_per_mib, cached_bytes / bytes_per_mib, texture_budget_bytes / bytes_per_mib);
+    }
 }
 
 void sync_texture(VKContext &context, MemState &mem, std::size_t index, SceGxmTexture texture, const Config &config) {
@@ -276,6 +360,26 @@ bool VKTextureCache::init(const bool hashless_texture_cache, const fs::path &tex
     TextureCache::init(hashless_texture_cache, texture_folder, game_id, max_sampler_used);
     backend = Backend::Vulkan;
 
+#ifdef __ANDROID__
+    uint64_t largest_memory_heap = 0;
+    for (uint32_t i = 0; i < state.physical_device_memory.memoryHeapCount; ++i) {
+        largest_memory_heap = std::max(largest_memory_heap,
+            static_cast<uint64_t>(state.physical_device_memory.memoryHeaps[i].size));
+    }
+    // Use a conservative Android texture-cache budget: one sixteenth of the largest
+    // shared/device heap (about 231 MiB on the Redmi 10).
+    base_texture_budget_bytes = std::max<uint64_t>(32ULL * bytes_per_mib, largest_memory_heap / 16);
+    texture_budget_bytes = base_texture_budget_bytes;
+    memory_pressure_level = 0;
+    LOG_INFO("[TEXMEM] texture cache budget: {} MiB (largest Vulkan heap {} MiB)",
+        texture_budget_bytes / bytes_per_mib, largest_memory_heap / bytes_per_mib);
+#else
+    // Keep the existing cache behaviour unchanged on desktop builds.
+    base_texture_budget_bytes = 0;
+    texture_budget_bytes = 0;
+    memory_pressure_level = 0;
+#endif
+
     samplers.resize(max_sampler_used);
 
     // check for linear filtering on depth support
@@ -396,13 +500,17 @@ void VKTextureCache::configure_texture(const SceGxmTexture &gxm_texture) {
         memory_needed += memory_needed / 2;
     if (is_cube)
         memory_needed *= 6;
-    current_texture->memory_needed = align(memory_needed, 16);
+    const uint32_t requested_memory = align(memory_needed, 16);
+    current_texture->memory_needed = 0;
     vkutil::Image &image = current_texture->texture;
 
     // In case the cache is full, no need to put the previous image in the destroy queue
     // because of texture importation, we must be careful when destroying an image
     if (image.image)
         state.frame().destroy_queue.add_image(image);
+
+    trim_to_budget(requested_memory);
+    current_texture->memory_needed = requested_memory;
 
     // manually initialize the image
     image.width = width;
@@ -605,22 +713,26 @@ void VKTextureCache::import_configure_impl(SceGxmTextureBaseFormat base_format, 
         const size_t bpp = gxm::bits_per_pixel(base_format);
         texture_size = static_cast<uint32_t>((align(width, 4) * align(height, 4) * bpp) / 8);
     }
-    current_texture->memory_needed = align(texture_size, 16);
+    uint32_t requested_memory = align(texture_size, 16);
 
     current_texture->mip_count = mipcount;
     if (mipcount > 1)
-        current_texture->memory_needed += current_texture->memory_needed / 2;
+        requested_memory += requested_memory / 2;
 
     const bool is_cube = current_info->texture.texture_type() == SCE_GXM_TEXTURE_CUBE || current_info->texture.texture_type() == SCE_GXM_TEXTURE_CUBE_ARBITRARY;
     current_texture->is_cube = is_cube;
     if (is_cube)
-        current_texture->memory_needed *= 6;
+        requested_memory *= 6;
 
+    current_texture->memory_needed = 0;
     vkutil::Image &image = current_texture->texture;
     // In case the cache is full, no need to put the previous image in the destroy queue
     // because of texture importation, we must be careful when destroying an image
     if (image.image)
         state.frame().destroy_queue.add_image(image);
+
+    trim_to_budget(requested_memory);
+    current_texture->memory_needed = requested_memory;
 
     vk::Format vk_format = texture::translate_format(base_format);
     if (is_srgb)

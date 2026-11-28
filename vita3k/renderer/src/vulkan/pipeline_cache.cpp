@@ -31,6 +31,8 @@
 
 #include <SDL3/SDL_cpuinfo.h>
 
+#include <algorithm>
+
 // don't use the dispatch version, because we always hash a small amount
 // with a known size
 #define XXH_INLINE_ALL
@@ -237,6 +239,11 @@ void PipelineCache::init(bool support_rasterized_order_access) {
         nb_worker_threads = 2;
     else
         nb_worker_threads = 1;
+
+#ifdef __ANDROID__
+    // Keep background shader compilation from competing excessively with the game on mobile CPUs.
+    nb_worker_threads = std::min(nb_worker_threads, 2);
+#endif
 
     if (use_async_compilation) {
         // we could not initialize the worker threads previously

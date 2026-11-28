@@ -12,6 +12,7 @@
 #include <ime/keyboard.h>
 #include <io/state.h>
 #include <motion/functions.h>
+#include <renderer/functions.h>
 
 #include <SDL3/SDL_events.h>
 #include <jni.h>
@@ -75,6 +76,11 @@ Java_org_vita3k_emulator_NativeLib_setPauseReasonEnabled(JNIEnv *, jclass, jint 
         return JNI_FALSE;
 
     return controller->set_pause_reason(reason, enabled == JNI_TRUE) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT void JNICALL
+Java_org_vita3k_emulator_NativeLib_notifyMemoryPressure(JNIEnv *, jclass, jint level) {
+    renderer::notify_memory_pressure(level);
 }
 
 JNIEXPORT jboolean JNICALL
